@@ -1,0 +1,14 @@
+{
+  "name": "ha-automations-management-addon",
+  "version": "1.0.0b2",
+  "private": true,
+  "main": "src/server.js",
+  "license": "Apache-2.0",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "js-yaml": "^4.1.0"
+  }
+}

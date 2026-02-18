@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0b2 - 2026-02-18
+
+- Implemented Home Assistant add-on runtime skeleton (`config.yaml`, `Dockerfile`, entrypoint).
+- Added backend API for import/sync, metadata updates, quarantine/restore, and Git actions.
+- Added local-first Git backup service with automatic repository initialization.
+- Added periodic sync and startup import with automatic commit on detected imports.
+
 ## 1.0.0b1 - 2026-02-18
 
 - Created initial project scope and architecture documentation.
