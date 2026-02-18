@@ -12,8 +12,9 @@ function tempDir(prefix) {
 }
 
 class FakeHaClient {
-  constructor(items = []) {
+  constructor(items = [], scripts = []) {
     this.items = items;
+    this.scripts = scripts;
     this.deleted = [];
     this.upserted = [];
     this.metadataUpdates = [];
@@ -24,7 +25,7 @@ class FakeHaClient {
   }
 
   async listScripts() {
-    return [];
+    return this.scripts;
   }
 
   async getAutomationConfig(id) {
@@ -238,6 +239,37 @@ test('AutomationService quarantine requires explicit confirmation', async () => 
   );
 });
 
+test('AutomationService quarantine retries HA delete using editId fallback', async () => {
+  const storeDir = tempDir('ha-am-store-');
+  const repoDir = tempDir('ha-am-git-');
+  const store = new StoreService(storeDir);
+  const haClient = new FakeHaClient([]);
+  const deleted = [];
+  haClient.deleteAutomation = async (candidateId) => {
+    deleted.push(candidateId);
+    if (candidateId !== '1616591108265') {
+      throw new Error(`HA request failed (400) /api/config/automation/config/${candidateId}: {"message":"Resource not found"}`);
+    }
+  };
+  const gitBackup = new FakeGitBackup(repoDir);
+
+  store.upsertAutomation('automation.vacation_light_off', {
+    id: 'automation.vacation_light_off',
+    entityId: 'automation.vacation_light_off',
+    editId: '1616591108265',
+    alias: 'Vacation light off',
+    status: 'active',
+  });
+  gitBackup.writeYaml('active', 'automation.vacation_light_off', { alias: 'Vacation light off', action: [] });
+
+  const service = new AutomationService({ store, haClient, gitBackup });
+  await service.quarantineAutomation('automation.vacation_light_off', { confirmed: true });
+
+  const updated = store.getAutomation('automation.vacation_light_off');
+  assert.equal(updated.status, 'quarantine');
+  assert.deepEqual(deleted, ['1616591108265']);
+});
+
 test('AutomationService does not quarantine when HA existence check confirms automation', async () => {
   const storeDir = tempDir('ha-am-store-');
   const repoDir = tempDir('ha-am-git-');
@@ -389,6 +421,56 @@ test('buildDeviceView groups multiple entity references under one device_id entr
   assert.equal(grouped[0].deviceName, 'bed dimmer Pawel');
   assert.equal(grouped[0].automationIds.length, 1);
   assert.equal(grouped[0].automationIds[0].id, 'automation.same_device');
+});
+
+test('importFromHa writes imported script YAML and includes script in catalog', async () => {
+  const storeDir = tempDir('ha-am-store-');
+  const repoDir = tempDir('ha-am-git-');
+  const store = new StoreService(storeDir);
+  const haClient = new FakeHaClient([], [
+    {
+      id: 'script.good_night',
+      entity_id: 'script.good_night',
+      alias: 'Good night',
+      raw_config: {
+        alias: 'Good night',
+        sequence: [{ service: 'light.turn_off', target: { entity_id: 'light.bedroom' } }],
+      },
+    },
+  ]);
+  const gitBackup = new FakeGitBackup(repoDir);
+  const service = new AutomationService({ store, haClient, gitBackup });
+
+  await service.importFromHa({ automaticCommit: false });
+
+  assert.equal(service.listScripts().length, 1);
+  assert.equal(service.listScripts()[0].id, 'script.good_night');
+  assert.equal(gitBackup.fileExists('active', 'script.good_night'), true);
+});
+
+test('buildDeviceView includes scripts that reference entities', async () => {
+  const storeDir = tempDir('ha-am-store-');
+  const repoDir = tempDir('ha-am-git-');
+  const store = new StoreService(storeDir);
+  const haClient = new FakeHaClient([], [
+    {
+      id: 'script.night_light',
+      entity_id: 'script.night_light',
+      alias: 'Night light',
+      raw_config: {
+        alias: 'Night light',
+        sequence: [{ service: 'light.turn_on', target: { entity_id: 'light.hall' } }],
+      },
+    },
+  ]);
+  const gitBackup = new FakeGitBackup(repoDir);
+  const service = new AutomationService({ store, haClient, gitBackup });
+  await service.importFromHa({ automaticCommit: false });
+
+  const devices = await service.buildDeviceView();
+  const hall = devices.find((entry) => entry.deviceId === 'light.hall');
+  assert.ok(hall);
+  assert.ok(hall.automationIds.some((entry) => entry.id === 'script.night_light' && entry.entityType === 'script'));
 });
 
 test('validateRawYaml reports syntax errors and structural warnings', () => {

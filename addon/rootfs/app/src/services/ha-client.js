@@ -41,6 +41,13 @@ function slugify(value) {
     .replace(/^_+|_+$/g, '');
 }
 
+function inferHaEnabled(domain, stateValue) {
+  if (domain === 'script') {
+    return true;
+  }
+  return stateValue !== 'off';
+}
+
 class HaClient {
   constructor() {
     this.baseUrl = process.env.HA_URL || 'http://supervisor/core';
@@ -439,7 +446,7 @@ class HaClient {
         const rawLabels = rawLabelsSource.map((value) => String(value));
         const labelNames = rawLabels.map((labelId) => labelNameById.get(labelId) || labelId).filter(Boolean);
         const stateValue = String(stateByEntityId.get(entry.entity_id) || '').toLowerCase();
-        const haEnabled = stateValue ? stateValue !== 'off' : true;
+        const haEnabled = stateValue ? inferHaEnabled(domain, stateValue) : true;
         const rawCategory = String(
           entry.category
             || entry.category_id
@@ -554,7 +561,7 @@ class HaClient {
           String(entry.attributes?.category || entry.attributes?.category_id || ''),
           DOMAIN_SCOPES[domain] || CATEGORY_SCOPES
         ),
-        ha_enabled: String(entry.state || '').toLowerCase() !== 'off',
+        ha_enabled: inferHaEnabled(domain, String(entry.state || '').toLowerCase()),
         raw_config: rawConfig,
       };
     });
@@ -682,7 +689,7 @@ class HaClient {
             }
             const entityId = entry.entity_id || id;
             const stateValue = String(stateByEntityId.get(entityId) || '').toLowerCase();
-            const haEnabled = stateValue ? stateValue !== 'off' : true;
+            const haEnabled = stateValue ? inferHaEnabled(domain, stateValue) : true;
             this.entityIdByAutomationId.set(id, entityId);
 
             normalized.push({

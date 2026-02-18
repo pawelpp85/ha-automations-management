@@ -131,6 +131,14 @@ function normalizeEntityType(value) {
   return type === 'script' ? 'script' : 'automation';
 }
 
+function canRetryNotFoundDelete(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return message.includes('resource not found')
+    || message.includes('not found')
+    || message.includes('(404)')
+    || message.includes('(400)');
+}
+
 class AutomationService {
   constructor({ store, haClient, gitBackup }) {
     this.store = store;
@@ -629,11 +637,37 @@ class AutomationService {
       throw new Error(`Entity is not a ${expectedType}.`);
     }
 
-    if (entityType === 'script') {
-      await this.haClient.deleteScript(id);
-    } else {
-      await this.haClient.deleteAutomation(id);
+    const deleteCandidates = [
+      normalizeAutomationId(record.editId),
+      normalizeAutomationId(record.entityId),
+      normalizeAutomationId(record.id),
+    ].filter(Boolean);
+    const uniqueDeleteCandidates = [...new Set(deleteCandidates)];
+
+    let deletedFromHa = false;
+    let lastDeleteError = null;
+
+    for (const candidateId of uniqueDeleteCandidates) {
+      try {
+        if (entityType === 'script') {
+          await this.haClient.deleteScript(candidateId);
+        } else {
+          await this.haClient.deleteAutomation(candidateId);
+        }
+        deletedFromHa = true;
+        break;
+      } catch (error) {
+        lastDeleteError = error;
+        if (!canRetryNotFoundDelete(error)) {
+          throw error;
+        }
+      }
     }
+
+    if (!deletedFromHa) {
+      throw lastDeleteError || new Error('Failed to remove entity from Home Assistant before quarantine.');
+    }
+
     this.gitBackup.moveToQuarantine(id);
 
     const updated = this.store.upsertAutomation(id, {
