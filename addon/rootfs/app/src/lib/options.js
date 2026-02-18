@@ -7,6 +7,7 @@ const DEFAULTS = {
   remote_branch: 'main',
   remote_auth_mode: 'ssh',
   remote_ssh_key: '',
+  remote_ssh_key_base64: '',
   remote_https_username: '',
   remote_https_token: '',
   git_user_name: 'HA Automation Manager',

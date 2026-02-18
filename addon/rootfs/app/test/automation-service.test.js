@@ -5,7 +5,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { StoreService } = require('../src/services/store');
-const { AutomationService } = require('../src/services/automation-service');
+const { AutomationService, extractDeviceRefs } = require('../src/services/automation-service');
 
 function tempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -37,6 +37,26 @@ class FakeHaClient {
 
   async automationExists(entityId) {
     return this.items.some((item) => (item.entity_id || item.id) === entityId);
+  }
+
+  async resolveDeviceReference(reference) {
+    const value = String(reference || '').trim();
+    if (value === '0163d78db1e36467e298496641d861c3') {
+      return [
+        {
+          key: 'media_player.nestmini1128',
+          display: 'media_player.nestmini1128',
+          sourceDeviceId: value,
+        },
+      ];
+    }
+
+    return [
+      {
+        key: value,
+        display: value,
+      },
+    ];
   }
 }
 
@@ -129,7 +149,14 @@ test('AutomationService auto-quarantines missing active automation and emits war
   const storeDir = tempDir('ha-am-store-');
   const repoDir = tempDir('ha-am-git-');
   const store = new StoreService(storeDir);
-  const haClient = new FakeHaClient([]);
+  const haClient = new FakeHaClient([
+    {
+      id: 'automation.other',
+      entity_id: 'automation.other',
+      alias: 'Other',
+      raw_config: { alias: 'Other', trigger: [], action: [] },
+    },
+  ]);
   const gitBackup = new FakeGitBackup(repoDir);
 
   store.upsertAutomation('automation.missing', {
@@ -141,8 +168,15 @@ test('AutomationService auto-quarantines missing active automation and emits war
 
   const service = new AutomationService({ store, haClient, gitBackup });
   await service.importFromHa({ automaticCommit: false });
+  let updated = store.getAutomation('automation.missing');
+  assert.equal(updated.status, 'active');
 
-  const updated = store.getAutomation('automation.missing');
+  await service.importFromHa({ automaticCommit: false });
+  updated = store.getAutomation('automation.missing');
+  assert.equal(updated.status, 'active');
+
+  await service.importFromHa({ automaticCommit: false });
+  updated = store.getAutomation('automation.missing');
   assert.equal(updated.status, 'quarantine');
   assert.equal(store.listWarnings().length, 1);
 });
@@ -168,4 +202,101 @@ test('AutomationService quarantine requires explicit confirmation', async () => 
     },
     /confirmed=true/
   );
+});
+
+test('AutomationService does not quarantine when HA existence check confirms automation', async () => {
+  const storeDir = tempDir('ha-am-store-');
+  const repoDir = tempDir('ha-am-git-');
+  const store = new StoreService(storeDir);
+  const haClient = new FakeHaClient([]);
+  haClient.automationExists = async () => true;
+  const gitBackup = new FakeGitBackup(repoDir);
+
+  store.upsertAutomation('automation.exists_in_ha', {
+    id: 'automation.exists_in_ha',
+    alias: 'Exists in HA',
+    status: 'active',
+  });
+  gitBackup.writeYaml('active', 'automation.exists_in_ha', { alias: 'Exists in HA', action: [] });
+
+  const service = new AutomationService({ store, haClient, gitBackup });
+  await service.importFromHa({ automaticCommit: false });
+
+  const updated = store.getAutomation('automation.exists_in_ha');
+  assert.equal(updated.status, 'active');
+  assert.equal(store.listWarnings().length, 0);
+});
+
+test('extractDeviceRefs extracts entity_id from templates and direct fields', () => {
+  const parsed = {
+    condition: [
+      {
+        condition: 'template',
+        value_template: "{{ states('input_select.hall_scenes') }}",
+      },
+    ],
+    trigger: [
+      {
+        platform: 'state',
+        entity_id: 'binary_sensor.hall_motion',
+      },
+    ],
+  };
+
+  const refs = [...extractDeviceRefs(parsed)].sort((a, b) => a.localeCompare(b));
+  assert.deepEqual(refs, ['binary_sensor.hall_motion', 'input_select.hall_scenes']);
+});
+
+test('buildDeviceView maps UUID device_id values to entity_ids', async () => {
+  const storeDir = tempDir('ha-am-store-');
+  const repoDir = tempDir('ha-am-git-');
+  const store = new StoreService(storeDir);
+  const haClient = new FakeHaClient([
+    {
+      id: 'automation.device_uuid',
+      entity_id: 'automation.device_uuid',
+      alias: 'Device UUID',
+      raw_config: {
+        alias: 'Device UUID',
+        trigger: [],
+        condition: [],
+        action: [
+          {
+            device_id: '0163d78db1e36467e298496641d861c3',
+          },
+        ],
+      },
+    },
+  ]);
+  const gitBackup = new FakeGitBackup(repoDir);
+
+  const service = new AutomationService({ store, haClient, gitBackup });
+  await service.importFromHa({ automaticCommit: false });
+
+  const devices = await service.buildDeviceView();
+  const target = devices.find((entry) => entry.deviceId === 'media_player.nestmini1128');
+  assert.ok(target);
+  assert.equal(target.automationIds.length, 1);
+  assert.equal(target.automationIds[0].id, 'automation.device_uuid');
+  assert.deepEqual(target.sourceDeviceIds, ['0163d78db1e36467e298496641d861c3']);
+});
+
+test('validateRawYaml reports syntax errors and structural warnings', () => {
+  const storeDir = tempDir('ha-am-store-');
+  const repoDir = tempDir('ha-am-git-');
+  const store = new StoreService(storeDir);
+  const haClient = new FakeHaClient([]);
+  const gitBackup = new FakeGitBackup(repoDir);
+  const service = new AutomationService({ store, haClient, gitBackup });
+
+  assert.throws(
+    () => service.validateRawYaml({ yamlText: 'alias: test\naction: [' }),
+    /YAML syntax error/
+  );
+
+  const result = service.validateRawYaml({
+    yamlText: 'alias: test\naction:\n  service: light.turn_on\n',
+  });
+  assert.equal(result.valid, true);
+  assert.equal(result.warnings.length, 1);
 });

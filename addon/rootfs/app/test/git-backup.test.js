@@ -19,6 +19,7 @@ function options() {
     remote_branch: 'main',
     remote_auth_mode: 'ssh',
     remote_ssh_key: '',
+    remote_ssh_key_base64: '',
     remote_https_username: '',
     remote_https_token: '',
   };
@@ -62,4 +63,20 @@ test('GitBackupService creates commits when changes exist', () => {
 
   const noChange = backup.commit('test: noop');
   assert.equal(noChange.created, false);
+});
+
+test('GitBackupService rejects invalid base64 SSH key early', () => {
+  const repoDir = tempDir('ha-am-repo-push-');
+  const backup = new GitBackupService({
+    ...options(),
+    remote_enabled: true,
+    remote_url: 'git@github.com:example/private.git',
+    remote_auth_mode: 'ssh',
+    remote_ssh_key_base64: 'not-base64***',
+  }, repoDir);
+
+  assert.throws(
+    () => backup.push(),
+    /Invalid SSH key format|Invalid remote_ssh_key_base64/
+  );
 });

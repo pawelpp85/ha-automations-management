@@ -52,7 +52,24 @@ class HaClient {
 
     this.cachedConfigs = new Map();
     this.entityIdByAutomationId = new Map();
+    this.entityIdsByDeviceId = new Map();
+    this.deviceNameByDeviceId = new Map();
+    this.deviceRegistryLoadedAt = 0;
     this.yamlPath = process.env.HA_AUTOMATIONS_YAML_PATH || '/config/automations.yaml';
+  }
+
+  addDeviceEntityLink(deviceId, entityId) {
+    const normalizedDeviceId = String(deviceId || '').trim();
+    const normalizedEntityId = String(entityId || '').trim();
+    if (!normalizedDeviceId || !normalizedEntityId) {
+      return;
+    }
+
+    if (!this.entityIdsByDeviceId.has(normalizedDeviceId)) {
+      this.entityIdsByDeviceId.set(normalizedDeviceId, new Set());
+    }
+
+    this.entityIdsByDeviceId.get(normalizedDeviceId).add(normalizedEntityId);
   }
 
   buildHaWsUrl() {
@@ -208,6 +225,64 @@ class HaClient {
 
     try {
       const entities = await client.request('config/entity_registry/list');
+      let states = [];
+      try {
+        states = await this.request('/api/states');
+      } catch (_error) {
+        states = [];
+      }
+      const stateByEntityId = new Map(
+        (states || [])
+          .filter((entry) => entry && entry.entity_id)
+          .map((entry) => [String(entry.entity_id), String(entry.state || '')])
+      );
+      let areas = [];
+      let labels = [];
+      let devices = [];
+      try {
+        areas = await client.request('config/area_registry/list');
+      } catch (_error) {
+        areas = [];
+      }
+      try {
+        labels = await client.request('config/label_registry/list');
+      } catch (_error) {
+        labels = [];
+      }
+      try {
+        devices = await client.request('config/device_registry/list');
+      } catch (_error) {
+        devices = [];
+      }
+
+      const areaNameById = new Map(
+        (areas || []).map((area) => [String(area.area_id || area.id || ''), String(area.name || '')])
+      );
+      const labelNameById = new Map(
+        (labels || []).map((label) => [String(label.label_id || label.id || ''), String(label.name || '')])
+      );
+      this.entityIdsByDeviceId.clear();
+      this.deviceNameByDeviceId.clear();
+      for (const entry of entities || []) {
+        this.addDeviceEntityLink(entry?.device_id, entry?.entity_id);
+      }
+      for (const device of devices || []) {
+        const deviceId = String(device?.id || device?.device_id || '').trim();
+        if (!deviceId) {
+          continue;
+        }
+        const deviceName = String(
+          device?.name_by_user
+            || device?.name
+            || device?.model
+            || ''
+        ).trim();
+        if (deviceName) {
+          this.deviceNameByDeviceId.set(deviceId, deviceName);
+        }
+      }
+      this.deviceRegistryLoadedAt = Date.now();
+
       const automationEntities = (entities || []).filter(
         (entry) => entry && typeof entry.entity_id === 'string' && entry.entity_id.startsWith('automation.')
       );
@@ -234,6 +309,22 @@ class HaClient {
         const automationId = entry.entity_id;
         const haUniqueId = entry.unique_id || '';
         const alias = config?.alias || entry.original_name || entry.entity_id;
+        const areaId = String(entry.area_id || entry.area || '');
+        const roomName = areaId ? (areaNameById.get(areaId) || '') : '';
+        const rawLabelsSource = Array.isArray(entry.labels)
+          ? entry.labels
+          : (Array.isArray(entry.label_ids) ? entry.label_ids : []);
+        const rawLabels = rawLabelsSource.map((value) => String(value));
+        const labelNames = rawLabels.map((labelId) => labelNameById.get(labelId) || labelId).filter(Boolean);
+        const stateValue = String(stateByEntityId.get(entry.entity_id) || '').toLowerCase();
+        const haEnabled = stateValue ? stateValue !== 'off' : true;
+        const category = String(
+          entry.category
+            || entry.category_id
+            || entry.categories?.automation
+            || entry.categories?.entity
+            || ''
+        );
 
         if (config) {
           this.cachedConfigs.set(automationId, config);
@@ -249,6 +340,13 @@ class HaClient {
           alias,
           entity_id: entry.entity_id,
           ha_unique_id: haUniqueId,
+          room: roomName || areaId,
+          area_id: areaId,
+          labels: labelNames,
+          label_ids: rawLabels,
+          label_names: labelNames,
+          category,
+          ha_enabled: haEnabled,
           raw_config: config || {
             alias,
             trigger: [],
@@ -313,11 +411,61 @@ class HaClient {
         alias,
         entity_id: entityId,
         ha_unique_id: '',
+        room: String(entry.attributes?.area_name || ''),
+        labels: Array.isArray(entry.attributes?.labels) ? entry.attributes.labels : [],
+        label_ids: Array.isArray(entry.attributes?.label_ids) ? entry.attributes.label_ids : [],
+        label_names: [],
+        category: String(entry.attributes?.category || entry.attributes?.category_id || ''),
+        ha_enabled: String(entry.state || '').toLowerCase() !== 'off',
         raw_config: rawConfig,
       };
     });
 
     return output;
+  }
+
+  async ensureDeviceRegistryCache() {
+    const recentlyLoaded = this.deviceRegistryLoadedAt && (Date.now() - this.deviceRegistryLoadedAt) < 120000;
+    if (recentlyLoaded && this.entityIdsByDeviceId.size > 0) {
+      return;
+    }
+
+    try {
+      const client = await this.createWsClient();
+      try {
+        const [entities, devices] = await Promise.all([
+          client.request('config/entity_registry/list'),
+          client.request('config/device_registry/list').catch(() => []),
+        ]);
+
+        this.entityIdsByDeviceId.clear();
+        this.deviceNameByDeviceId.clear();
+        for (const entry of entities || []) {
+          this.addDeviceEntityLink(entry?.device_id, entry?.entity_id);
+        }
+
+        for (const device of devices || []) {
+          const deviceId = String(device?.id || device?.device_id || '').trim();
+          if (!deviceId) {
+            continue;
+          }
+          const deviceName = String(
+            device?.name_by_user
+              || device?.name
+              || device?.model
+              || ''
+          ).trim();
+          if (deviceName) {
+            this.deviceNameByDeviceId.set(deviceId, deviceName);
+          }
+        }
+        this.deviceRegistryLoadedAt = Date.now();
+      } finally {
+        client.close();
+      }
+    } catch (_error) {
+      // Best-effort cache for device->entity mapping.
+    }
   }
 
   async listAutomations() {
@@ -342,6 +490,17 @@ class HaClient {
         const data = await this.request('/api/config/automation/config');
         const list = Array.isArray(data) ? data : [];
         const normalized = [];
+        let states = [];
+        try {
+          states = await this.request('/api/states');
+        } catch (_error) {
+          states = [];
+        }
+        const stateByEntityId = new Map(
+          (states || [])
+            .filter((entry) => entry && entry.entity_id)
+            .map((entry) => [String(entry.entity_id), String(entry.state || '')])
+        );
 
         for (const entry of list) {
           const rawId = entry.id || entry.entity_id;
@@ -353,6 +512,8 @@ class HaClient {
               this.cachedConfigs.set(String(rawId), rawConfig);
             }
             const entityId = entry.entity_id || id;
+            const stateValue = String(stateByEntityId.get(entityId) || '').toLowerCase();
+            const haEnabled = stateValue ? stateValue !== 'off' : true;
             this.entityIdByAutomationId.set(id, entityId);
 
             normalized.push({
@@ -361,6 +522,12 @@ class HaClient {
               edit_id: rawId && String(rawId) !== String(entityId) ? String(rawId) : '',
               ha_unique_id: rawId && String(rawId) !== String(entityId) ? String(rawId) : '',
               alias: entry.alias || entry.name || rawConfig.alias || entityId,
+              room: String(entry.room || ''),
+              labels: Array.isArray(entry.labels) ? entry.labels : (Array.isArray(entry.label_ids) ? entry.label_ids : []),
+              label_ids: Array.isArray(entry.label_ids) ? entry.label_ids : [],
+              label_names: Array.isArray(entry.label_names) ? entry.label_names : [],
+              category: String(entry.category || entry.category_id || ''),
+              ha_enabled: haEnabled,
               raw_config: rawConfig,
             });
           }
@@ -493,6 +660,39 @@ class HaClient {
       console.warn(`Could not verify automation existence for ${entityId}; skipping quarantine for safety.`, error.message);
       return true;
     }
+  }
+
+  async resolveDeviceReference(reference) {
+    const ref = String(reference || '').trim();
+    if (!ref) {
+      return [];
+    }
+
+    if (/^[a-z0-9_]+\.[a-z0-9_]+$/i.test(ref)) {
+      return [{
+        key: ref,
+        display: ref,
+      }];
+    }
+
+    await this.ensureDeviceRegistryCache();
+    const mapped = this.entityIdsByDeviceId.get(ref);
+    if (mapped && mapped.size) {
+      return [...mapped]
+        .sort((a, b) => a.localeCompare(b))
+        .map((entityId) => ({
+          key: entityId,
+          display: entityId,
+          sourceDeviceId: ref,
+        }));
+    }
+
+    const deviceName = this.deviceNameByDeviceId.get(ref) || '';
+    return [{
+      key: ref,
+      display: deviceName || ref,
+      sourceDeviceId: ref,
+    }];
   }
 }
 

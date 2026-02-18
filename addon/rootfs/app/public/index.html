@@ -168,9 +168,16 @@
 
     .filters {
       display: grid;
-      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      grid-template-columns: repeat(5, minmax(120px, 1fr));
       gap: 0.55rem;
-      width: min(700px, 100%);
+      width: min(920px, 100%);
+    }
+
+    .devices-filters {
+      width: min(460px, 100%);
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.55rem;
     }
 
     .meta-tools {
@@ -295,6 +302,10 @@
       color: var(--warn);
     }
 
+    .status.disabled {
+      color: var(--muted);
+    }
+
     .toast {
       position: fixed;
       right: 1rem;
@@ -376,6 +387,12 @@
           <input id="f-category" list="category-options" placeholder="Filter category" />
           <input id="f-label" list="label-options" placeholder="Filter label" />
           <input id="f-room" list="room-options" placeholder="Filter room" />
+          <select id="f-status" title="Filter by current automation status.">
+            <option value="">All statuses</option>
+            <option value="active">Active</option>
+            <option value="disabled">Disabled</option>
+            <option value="quarantine">Quarantine</option>
+          </select>
         </div>
         <datalist id="name-options"></datalist>
         <datalist id="category-options"></datalist>
@@ -400,7 +417,11 @@
     <section id="view-devices" class="view">
       <div class="view-head">
         <strong>Device Relationships</strong>
-        <span class="hint">Click automation chips to open new tab for edit context.</span>
+        <div class="devices-filters">
+          <input id="f-device" list="device-options" placeholder="Filter device name or ID" />
+          <datalist id="device-options"></datalist>
+          <span class="hint">Click automation chips to open new tab for edit context.</span>
+        </div>
       </div>
       <div id="devices-list"></div>
     </section>
@@ -440,6 +461,7 @@
           <input id="raw-commit-msg" placeholder="Commit message for raw configuration change" />
         </div>
         <div class="actions" style="margin-bottom: 0.6rem;">
+          <button id="raw-validate" title="Validate YAML syntax and basic structure without saving.">Validate YAML</button>
           <button id="raw-save" class="primary" title="Save YAML into backup and create commit.">Save YAML</button>
           <span id="raw-status" class="hint">Nothing loaded.</span>
         </div>
@@ -462,7 +484,7 @@
       devices: [],
       warnings: [],
       inFlight: new Set(),
-      filters: { name: '', category: '', label: '', room: '' },
+      filters: { name: '', category: '', label: '', room: '', status: '', device: '' },
       raw: {
         selectedId: '',
         loadedId: '',
@@ -546,6 +568,7 @@
       const categories = new Set();
       const labels = new Set();
       const rooms = new Set();
+      const devices = new Set();
 
       state.automations.forEach((item) => {
         if (item.alias) names.add(item.alias);
@@ -556,11 +579,19 @@
           if (label) labels.add(label);
         });
       });
+      state.devices.forEach((device) => {
+        if (device.deviceName) devices.add(device.deviceName);
+        if (device.deviceId) devices.add(device.deviceId);
+        (device.sourceDeviceIds || []).forEach((sourceId) => {
+          if (sourceId) devices.add(sourceId);
+        });
+      });
 
       setDatalist('name-options', [...names].sort((a, b) => a.localeCompare(b)));
       setDatalist('category-options', [...categories].sort((a, b) => a.localeCompare(b)));
       setDatalist('label-options', [...labels].sort((a, b) => a.localeCompare(b)));
       setDatalist('room-options', [...rooms].sort((a, b) => a.localeCompare(b)));
+      setDatalist('device-options', [...devices].sort((a, b) => a.localeCompare(b)));
     }
 
     function applyFilter(key, value) {
@@ -648,16 +679,21 @@
       const c = state.filters.category.trim().toLowerCase();
       const l = state.filters.label.trim().toLowerCase();
       const r = state.filters.room.trim().toLowerCase();
+      const s = state.filters.status.trim().toLowerCase();
 
       const nameText = `${item.alias || ''} ${item.id || ''}`.toLowerCase();
       const category = String(item.category || '').toLowerCase();
       const room = String(item.room || '').toLowerCase();
       const labels = (item.labels || []).join(' ').toLowerCase();
+      const status = item.status === 'quarantine'
+        ? 'quarantine'
+        : (item.haEnabled === false ? 'disabled' : 'active');
 
       return (!n || nameText.includes(n))
         && (!c || category.includes(c))
         && (!l || labels.includes(l))
-        && (!r || room.includes(r));
+        && (!r || room.includes(r))
+        && (!s || status === s);
     }
 
     function renderAutomations() {
@@ -665,8 +701,11 @@
       const rows = state.automations.filter(filterAutomation);
 
       body.innerHTML = rows.map((item) => {
-        const active = item.status !== 'quarantine';
-        const rowClass = active ? '' : 'quarantine';
+        const isQuarantine = item.status === 'quarantine';
+        const isDisabled = !isQuarantine && item.haEnabled === false;
+        const rowClass = isQuarantine ? 'quarantine' : '';
+        const statusClass = isQuarantine ? 'quarantine' : (isDisabled ? 'disabled' : 'active');
+        const statusText = isQuarantine ? 'quarantine' : (isDisabled ? 'disabled' : 'active');
         const category = item.category || '';
         const room = item.room || '';
         const labelsArray = Array.isArray(item.labels) ? item.labels : [];
@@ -680,7 +719,7 @@
               <small>${escapeHtml(item.id)}</small>
             </td>
             <td data-label="Status">
-              <span class="status ${active ? 'active' : 'quarantine'}">${active ? 'active' : 'quarantine'}</span>
+              <span class="status ${statusClass}">${statusText}</span>
             </td>
             <td data-label="Category">
               <input data-field="category" data-id="${escapeHtml(item.id)}" value="${escapeHtml(category)}" placeholder="e.g. climate" />
@@ -705,7 +744,7 @@
                 <button class="primary" data-action="save-meta" data-id="${escapeHtml(item.id)}" title="Save category, labels, and room metadata.">Save meta</button>
                 <button data-action="open-edit" data-id="${escapeHtml(item.id)}" data-edit-id="${escapeHtml(editId)}" title="Open Home Assistant automation edit page in a new tab.">Open edit</button>
                 <button data-action="open-raw" data-id="${escapeHtml(item.id)}" title="Open raw YAML editor for this automation.">Raw</button>
-                <button class="warn" data-action="quarantine" data-id="${escapeHtml(item.id)}" ${active ? '' : 'disabled'} title="Move automation to quarantine and remove it from HA after confirmation.">Quarantine</button>
+                <button class="warn" data-action="quarantine" data-id="${escapeHtml(item.id)}" ${isQuarantine ? 'disabled' : ''} title="Move automation to quarantine and remove it from HA after confirmation.">Quarantine</button>
               </div>
             </td>
           </tr>
@@ -720,16 +759,34 @@
         return;
       }
 
-      list.innerHTML = state.devices.map((device) => `
+      const deviceFilter = state.filters.device.trim().toLowerCase();
+      const visibleDevices = state.devices.filter((device) => {
+        if (!deviceFilter) {
+          return true;
+        }
+        const text = `${device.deviceName || ''} ${device.deviceId || ''} ${(device.sourceDeviceIds || []).join(' ')}`.toLowerCase();
+        return text.includes(deviceFilter);
+      });
+
+      if (!visibleDevices.length) {
+        list.innerHTML = '<div class="device-card">No devices match this filter.</div>';
+        return;
+      }
+
+      list.innerHTML = visibleDevices.map((device) => `
         <div class="device-card">
           <div class="device-title">
-            <span>${escapeHtml(device.deviceId)}</span>
+            <span>
+              ${escapeHtml(device.deviceName || device.deviceId)}
+              ${device.deviceName && device.deviceName !== device.deviceId ? `<br><small>${escapeHtml(device.deviceId)}</small>` : ''}
+              ${Array.isArray(device.sourceDeviceIds) && device.sourceDeviceIds.length ? `<br><small>device_id: ${escapeHtml(device.sourceDeviceIds.join(', '))}</small>` : ''}
+            </span>
             <span class="chip">${device.automationIds.length} automations</span>
           </div>
           <div class="device-links">
             ${device.automationIds.map((a) => `
               <button data-action="open-edit" data-id="${escapeHtml(a.id)}" data-edit-id="${escapeHtml(a.editId || '')}" title="Open automation edit in new tab.">
-                ${escapeHtml(a.alias || a.id)} (${escapeHtml(a.status)})
+                ${escapeHtml(a.alias || a.id)} (${escapeHtml(a.status === 'quarantine' ? 'quarantine' : (a.haEnabled === false ? 'disabled' : 'active'))})
               </button>
               <button data-action="open-raw" data-id="${escapeHtml(a.id)}" title="Open raw YAML editor.">Raw</button>
             `).join('')}
@@ -865,6 +922,8 @@
 
       setBusy('raw-save', true);
       try {
+        await validateRawConfiguration({ showSuccessToast: false });
+
         const result = await api(`/api/raw/${encodeURIComponent(id)}`, {
           method: 'POST',
           body: JSON.stringify({
@@ -886,6 +945,31 @@
         showToast(error.message);
       } finally {
         setBusy('raw-save', false);
+      }
+    }
+
+    async function validateRawConfiguration({ showSuccessToast = true } = {}) {
+      const yamlText = byId('raw-editor').value;
+      setBusy('raw-validate', true);
+      try {
+        const result = await api('/api/raw/validate', {
+          method: 'POST',
+          body: JSON.stringify({ yamlText }),
+        });
+        const warnings = result.data?.warnings || [];
+        if (warnings.length) {
+          byId('raw-status').textContent = `YAML valid with warnings: ${warnings.join(' ')}`;
+          if (showSuccessToast) {
+            showToast(`YAML valid with warnings (${warnings.length})`);
+          }
+        } else {
+          byId('raw-status').textContent = 'YAML syntax is valid.';
+          if (showSuccessToast) {
+            showToast('YAML syntax is valid.');
+          }
+        }
+      } finally {
+        setBusy('raw-validate', false);
       }
     }
 
@@ -1051,12 +1135,16 @@
     }
 
     function setupFilters() {
-      ['name', 'category', 'label', 'room'].forEach((key) => {
-        byId(`f-${key}`).addEventListener('input', (event) => {
+      ['name', 'category', 'label', 'room', 'status', 'device'].forEach((key) => {
+        const input = byId(`f-${key}`);
+        const onChange = (event) => {
           state.filters[key] = event.target.value;
           renderAutomations();
           renderQuarantine();
-        });
+          renderDevices();
+        };
+        input.addEventListener('input', onChange);
+        input.addEventListener('change', onChange);
       });
     }
 
@@ -1069,8 +1157,13 @@
         saveRawConfiguration().catch((error) => showToast(error.message));
       });
 
+      byId('raw-validate').addEventListener('click', () => {
+        validateRawConfiguration({ showSuccessToast: true }).catch((error) => showToast(error.message));
+      });
+
       byId('raw-select').addEventListener('change', (event) => {
         state.raw.selectedId = event.target.value;
+        loadRawConfiguration(event.target.value).catch((error) => showToast(error.message));
       });
     }
 

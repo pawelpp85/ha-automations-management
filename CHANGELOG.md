@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.0.0b13 - 2026-02-18
+
+- Added `Devices` filter by device name/ID in UI.
+- Added `Automations` filter by status (`active`, `disabled`, `quarantine`).
+- Improved device reference extraction from YAML templates, including patterns like `{{ states('input_select.hall_scenes') }}`.
+- Added `device_id` UUID resolution to entity IDs via Home Assistant device/entity registry cache.
+- Added `Raw configuration` auto-load on automation selection change.
+- Added raw YAML validator endpoint and UI action (`Validate YAML`) with basic lint warnings.
+- Added `remote_ssh_key_base64` option for environments where multiline key input is not available.
+- Bumped add-on metadata version to `1.0.0b13`.
+
+## 1.0.0b12 - 2026-02-18
+
+- Improved Git push error diagnostics for SSH auth failures (`libcrypto`, `publickey`, missing commits).
+- Added robust SSH key parsing for push: supports both multiline key and escaped `\\n` single-line format.
+- Added documentation note for environments without multiline option textbox support.
+- Bumped add-on metadata version to `1.0.0b12`.
+
+## 1.0.0b11 - 2026-02-18
+
+- Added explicit HA runtime state support for automations: UI now shows `disabled` when automation exists but is turned off in Home Assistant.
+- Added safer auto-quarantine policy: automation must be missing in consecutive checks before quarantine (prevents false positives).
+- Added automation ID normalization to avoid mismatch due hidden/control characters.
+- Improved HA classification import source by including entity registry labels/area/category when available.
+- Added additional quarantine decision logs for better diagnostics.
+- Bumped add-on metadata version to `1.0.0b11`.
+
 ## 1.0.0b10 - 2026-02-18
 
 - Added filter suggestions (`datalist`) for automation name, category, label, and room.

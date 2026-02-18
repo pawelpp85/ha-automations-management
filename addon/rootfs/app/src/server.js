@@ -22,14 +22,14 @@ app.use(express.static(path.join(__dirname, '../public')));
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
-    version: '1.0.0b10',
+    version: '1.0.0b13',
     startedAt: process.uptime(),
   });
 });
 
 app.get('/api/config', (_req, res) => {
   res.json({
-    version: '1.0.0b10',
+    version: '1.0.0b13',
     syncIntervalSeconds: options.sync_interval_seconds,
     remoteEnabled: options.remote_enabled,
   });
@@ -41,10 +41,13 @@ app.get('/api/automations', (_req, res) => {
   });
 });
 
-app.get('/api/devices', (_req, res) => {
-  res.json({
-    data: automationService.buildDeviceView(),
-  });
+app.get('/api/devices', async (_req, res) => {
+  try {
+    const data = await automationService.buildDeviceView();
+    res.json({ data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.get('/api/warnings', (_req, res) => {
@@ -83,6 +86,15 @@ app.get('/api/raw/:id', (req, res) => {
 app.get('/api/raw/:id/history/:commit', (req, res) => {
   try {
     const data = automationService.getRawConfigurationVersion(req.params.id, req.params.commit);
+    res.json({ data });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/raw/validate', (req, res) => {
+  try {
+    const data = automationService.validateRawYaml(req.body || {});
     res.json({ data });
   } catch (error) {
     res.status(400).json({ error: error.message });

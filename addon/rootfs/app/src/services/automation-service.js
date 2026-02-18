@@ -2,9 +2,47 @@ const crypto = require('crypto');
 const fs = require('fs');
 const yaml = require('js-yaml');
 
+const AUTO_QUARANTINE_MISS_THRESHOLD = 3;
+const UUID_LIKE_PATTERN = /^[a-f0-9]{32}$/i;
+
+function addEntityFromString(value, collector) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return;
+  }
+
+  if (/^[a-z0-9_]+\.[a-z0-9_]+$/i.test(text)) {
+    collector.add(text);
+    return;
+  }
+
+  const templateMatches = text.matchAll(/\b(?:states|state_attr|is_state|is_state_attr)\s*\(\s*['"]([^'"]+)['"]/gi);
+  for (const match of templateMatches) {
+    const entityId = String(match?.[1] || '').trim();
+    if (/^[a-z0-9_]+\.[a-z0-9_]+$/i.test(entityId)) {
+      collector.add(entityId);
+    }
+  }
+
+  if (text.includes('{{') || text.includes('{%')) {
+    const matches = text.matchAll(/\b[a-z_][a-z0-9_]*\.[a-z0-9_]+\b/gi);
+    for (const match of matches) {
+      const entityId = String(match?.[0] || '').trim();
+      if (/^[a-z0-9_]+\.[a-z0-9_]+$/i.test(entityId)) {
+        collector.add(entityId);
+      }
+    }
+  }
+}
+
 function extractDeviceRefs(node, collector = new Set()) {
   if (Array.isArray(node)) {
     node.forEach((entry) => extractDeviceRefs(entry, collector));
+    return collector;
+  }
+
+  if (typeof node === 'string') {
+    addEntityFromString(node, collector);
     return collector;
   }
 
@@ -13,9 +51,25 @@ function extractDeviceRefs(node, collector = new Set()) {
       const isEntityKey = key === 'entity_id' || key === 'device_id';
       if (isEntityKey) {
         if (Array.isArray(value)) {
-          value.forEach((item) => collector.add(String(item)));
+          value.forEach((item) => {
+            if (key === 'device_id') {
+              const candidate = String(item || '').trim();
+              if (candidate) {
+                collector.add(candidate);
+              }
+            } else {
+              addEntityFromString(item, collector);
+            }
+          });
         } else if (value) {
-          collector.add(String(value));
+          if (key === 'device_id') {
+            const candidate = String(value || '').trim();
+            if (candidate) {
+              collector.add(candidate);
+            }
+          } else {
+            addEntityFromString(value, collector);
+          }
         }
       } else {
         extractDeviceRefs(value, collector);
@@ -31,6 +85,12 @@ function normalizeString(value) {
     return '';
   }
   return value.trim();
+}
+
+function normalizeAutomationId(value) {
+  return String(value || '')
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .trim();
 }
 
 function normalizeLabels(value) {
@@ -50,6 +110,20 @@ function extractClassificationFromConfig(config) {
   const labels = normalizeLabels(config?.labels || metadata.labels || []);
 
   return { category, room, labels };
+}
+
+function mergeClassification(primary, secondary) {
+  return {
+    category: normalizeString(primary?.category || '') || normalizeString(secondary?.category || ''),
+    room: normalizeString(primary?.room || '') || normalizeString(secondary?.room || ''),
+    labels: normalizeLabels(primary?.labels || []).length
+      ? normalizeLabels(primary.labels)
+      : normalizeLabels(secondary?.labels || []),
+  };
+}
+
+function normalizeCategory(value) {
+  return normalizeString(value);
 }
 
 class AutomationService {
@@ -87,15 +161,15 @@ class AutomationService {
     let cleanedLegacyQuarantineCount = 0;
 
     for (const automation of automations) {
-      const automationId = automation.entity_id || automation.id;
+      const automationId = normalizeAutomationId(automation.entity_id || automation.id);
       if (!automationId) {
         continue;
       }
 
       try {
         const legacyIds = [
-          automation.id,
-          automation.ha_unique_id,
+          normalizeAutomationId(automation.id),
+          normalizeAutomationId(automation.ha_unique_id),
         ].filter((value) => value && value !== automationId);
 
         let existing = this.store.getAutomation(automationId);
@@ -125,7 +199,14 @@ class AutomationService {
         seenIds.add(automationId);
 
         const config = (await this.haClient.getAutomationConfig(automationId)) || automation.raw_config || automation;
-        const importedClassification = extractClassificationFromConfig(config);
+        const importedClassification = mergeClassification(
+          extractClassificationFromConfig(config),
+          {
+            category: normalizeCategory(automation.category || automation.category_id || ''),
+            room: automation.room || automation.area_name || automation.area_id || '',
+            labels: automation.labels || automation.label_names || automation.label_ids || [],
+          }
+        );
         const yamlHash = this.buildYamlHash(config);
         const previouslyMissing = existing && existing.status === 'quarantine' && existing.autoQuarantined;
 
@@ -140,11 +221,13 @@ class AutomationService {
           lastImportedAt: new Date().toISOString(),
           lastSeenInHa: new Date().toISOString(),
           status: 'active',
+          haEnabled: automation.ha_enabled !== false,
           autoQuarantined: false,
           haUniqueId: automation.ha_unique_id || existing?.haUniqueId || '',
           category: importedClassification.category || existing?.category || '',
           labels: importedClassification.labels.length ? importedClassification.labels : (existing?.labels || []),
           room: importedClassification.room || existing?.room || '',
+          missingSeenCount: 0,
         });
 
         if (!existing || existing.yamlHash !== yamlHash || previouslyMissing) {
@@ -157,10 +240,34 @@ class AutomationService {
     }
 
     const known = this.store.listAutomations();
+    let pendingMissingCount = 0;
     for (const record of known) {
-      if (record.status === 'active' && !seenIds.has(record.id)) {
-        const existsInHa = await this.haClient.automationExists(record.entityId || record.id);
+      const recordId = normalizeAutomationId(record.id);
+      if (record.status === 'active' && !seenIds.has(recordId)) {
+        if (automations.length === 0) {
+          this.store.upsertAutomation(record.id, {
+            missingSeenCount: 0,
+          });
+          continue;
+        }
+
+        const existsInHa = await this.haClient.automationExists(normalizeAutomationId(record.entityId || record.id));
         if (existsInHa) {
+          this.store.upsertAutomation(record.id, {
+            missingSeenCount: 0,
+          });
+          continue;
+        }
+
+        const nextMissingCount = Number(record.missingSeenCount || 0) + 1;
+        if (nextMissingCount < AUTO_QUARANTINE_MISS_THRESHOLD) {
+          this.store.upsertAutomation(record.id, {
+            missingSeenCount: nextMissingCount,
+          });
+          pendingMissingCount += 1;
+          console.warn(
+            `Automation ${record.id} missing in HA check ${nextMissingCount}/${AUTO_QUARANTINE_MISS_THRESHOLD}; waiting before quarantine.`
+          );
           continue;
         }
 
@@ -168,11 +275,13 @@ class AutomationService {
           status: 'quarantine',
           autoQuarantined: true,
           quarantinedAt: new Date().toISOString(),
+          missingSeenCount: 0,
         });
 
         this.gitBackup.moveToQuarantine(record.id);
         this.store.addWarning(`Automation ${record.id} disappeared from Home Assistant and was moved to quarantine.`);
         autoQuarantinedCount += 1;
+        console.warn(`Automation ${record.id} auto-quarantined after ${AUTO_QUARANTINE_MISS_THRESHOLD} missing checks.`);
       }
     }
 
@@ -191,7 +300,7 @@ class AutomationService {
     const quarantineCount = tracked.filter((entry) => entry.status === 'quarantine').length;
 
     console.log(
-      `Import summary: discovered=${automations.length}, changed=${importedCount}, failed=${failedCount}, active=${activeCount}, quarantine=${quarantineCount}, migrated=${migratedCount}, cleaned_legacy_quarantine=${cleanedLegacyQuarantineCount}`
+      `Import summary: discovered=${automations.length}, changed=${importedCount}, failed=${failedCount}, active=${activeCount}, quarantine=${quarantineCount}, pending_missing=${pendingMissingCount}, migrated=${migratedCount}, cleaned_legacy_quarantine=${cleanedLegacyQuarantineCount}`
     );
 
     return {
@@ -201,6 +310,7 @@ class AutomationService {
       activeCount,
       quarantineCount,
       trackedCount: tracked.length,
+      pendingMissingCount,
       migratedCount,
       cleanedLegacyQuarantineCount,
       autoCommit,
@@ -286,6 +396,36 @@ class AutomationService {
     }
 
     throw new Error('Selected commit does not contain this automation YAML.');
+  }
+
+  validateRawYaml(payload) {
+    const yamlText = String(payload?.yamlText || '');
+    let parsed;
+    try {
+      parsed = yaml.load(yamlText);
+    } catch (error) {
+      throw new Error(`YAML syntax error: ${error.message}`);
+    }
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Raw configuration must be a valid YAML object.');
+    }
+
+    const warnings = [];
+    if (parsed.trigger != null && !Array.isArray(parsed.trigger)) {
+      warnings.push('`trigger` should be an array.');
+    }
+    if (parsed.condition != null && !Array.isArray(parsed.condition)) {
+      warnings.push('`condition` should be an array.');
+    }
+    if (parsed.action != null && !Array.isArray(parsed.action)) {
+      warnings.push('`action` should be an array.');
+    }
+
+    return {
+      valid: true,
+      warnings,
+    };
   }
 
   async updateRawConfiguration(id, payload) {
@@ -419,10 +559,8 @@ class AutomationService {
     return { deleted: true, id };
   }
 
-  buildDeviceView() {
+  async buildDeviceView() {
     const output = {};
-    const fs = require('fs');
-    const yaml = require('js-yaml');
 
     for (const record of this.store.listAutomations()) {
       const status = record.status === 'quarantine' ? 'quarantine' : 'active';
@@ -439,27 +577,70 @@ class AutomationService {
       }
 
       const refs = [...extractDeviceRefs(parsed)];
+      const mappedKeysForRecord = new Set();
       for (const ref of refs) {
-        if (!output[ref]) {
-          output[ref] = {
-            deviceId: ref,
-            automationIds: [],
-          };
+        if (!ref) {
+          continue;
+        }
+        let resolvedRefs = [];
+        if (typeof this.haClient?.resolveDeviceReference === 'function') {
+          try {
+            resolvedRefs = await this.haClient.resolveDeviceReference(ref);
+          } catch (_error) {
+            resolvedRefs = [];
+          }
         }
 
-        output[ref].automationIds.push({
-          id: record.id,
-          editId: record.editId || '',
-          alias: record.alias || record.id,
-          status: record.status,
-          category: record.category || '',
-          room: record.room || '',
-          labels: record.labels || [],
-        });
+        const normalizedResolved = resolvedRefs.length
+          ? resolvedRefs
+          : [{ key: String(ref), display: String(ref) }];
+
+        for (const resolved of normalizedResolved) {
+          const key = String(resolved.key || '').trim();
+          if (!key) {
+            continue;
+          }
+          const dedupeKey = `${record.id}:${key}`;
+          if (mappedKeysForRecord.has(dedupeKey)) {
+            continue;
+          }
+          mappedKeysForRecord.add(dedupeKey);
+
+          if (!output[key]) {
+            output[key] = {
+              deviceId: key,
+              deviceName: String(resolved.display || key),
+              sourceDeviceIds: [],
+              automationIds: [],
+            };
+          }
+
+          const sourceDeviceId = String(resolved.sourceDeviceId || '').trim();
+          if (sourceDeviceId && UUID_LIKE_PATTERN.test(sourceDeviceId)) {
+            output[key].sourceDeviceIds.push(sourceDeviceId);
+            output[key].sourceDeviceIds = [...new Set(output[key].sourceDeviceIds)];
+          }
+
+          output[key].automationIds.push({
+            id: record.id,
+            editId: record.editId || '',
+            alias: record.alias || record.id,
+            status: record.status,
+            haEnabled: record.haEnabled !== false,
+            category: record.category || '',
+            room: record.room || '',
+            labels: record.labels || [],
+          });
+        }
       }
     }
 
-    return Object.values(output).sort((a, b) => a.deviceId.localeCompare(b.deviceId));
+    return Object.values(output)
+      .map((item) => ({
+        ...item,
+        automationIds: item.automationIds.sort((a, b) => (a.alias || a.id).localeCompare(b.alias || b.id)),
+      }))
+      .sort((a, b) => a.deviceId.localeCompare(b.deviceId));
   }
 
   commit(message) {
@@ -473,4 +654,5 @@ class AutomationService {
 
 module.exports = {
   AutomationService,
+  extractDeviceRefs,
 };

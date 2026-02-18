@@ -207,9 +207,40 @@ class GitBackupService {
     const branch = this.options.remote_branch || 'main';
     const envPatch = {};
 
-    if (this.options.remote_auth_mode === 'ssh' && this.options.remote_ssh_key) {
+    if (this.options.remote_auth_mode === 'ssh') {
       const keyPath = '/tmp/ha_automation_manager_remote_key';
-      fs.writeFileSync(keyPath, `${this.options.remote_ssh_key}\n`, { mode: 0o600 });
+      let keyMaterial = '';
+
+      const rawBase64 = String(this.options.remote_ssh_key_base64 || '').trim();
+      if (rawBase64) {
+        try {
+          const compactBase64 = rawBase64.replace(/\s+/g, '');
+          keyMaterial = Buffer.from(compactBase64, 'base64').toString('utf8');
+        } catch (_error) {
+          throw new Error('Invalid remote_ssh_key_base64 value. Provide valid base64 encoded private key text.');
+        }
+      }
+
+      if (!keyMaterial) {
+        keyMaterial = String(this.options.remote_ssh_key || '');
+        keyMaterial = keyMaterial.replace(/\r\n/g, '\n');
+        if (keyMaterial.includes('\\n')) {
+          keyMaterial = keyMaterial.replace(/\\n/g, '\n');
+        }
+      }
+
+      keyMaterial = keyMaterial.trim();
+      if (!keyMaterial) {
+        throw new Error('SSH auth mode selected, but no SSH key provided. Set remote_ssh_key or remote_ssh_key_base64.');
+      }
+
+      if (!keyMaterial.includes('BEGIN') || !keyMaterial.includes('PRIVATE KEY')) {
+        throw new Error(
+          'Invalid SSH key format. Paste full private key (multiline), use escaped \\n, or set remote_ssh_key_base64.'
+        );
+      }
+
+      fs.writeFileSync(keyPath, `${keyMaterial}\n`, { mode: 0o600 });
       envPatch.GIT_SSH_COMMAND = `ssh -i ${keyPath} -o StrictHostKeyChecking=no -o IdentitiesOnly=yes`;
     }
 
@@ -238,8 +269,23 @@ class GitBackupService {
 
     // Push from current HEAD to the configured target branch. This works even
     // when local branch is still "master" and target branch is "main".
-    this.git(['push', '-u', 'origin', `HEAD:${branch}`], envPatch);
-    return { pushed: true, branch, localBranch: currentBranch || null };
+    try {
+      this.git(['push', '-u', 'origin', `HEAD:${branch}`], envPatch);
+      return { pushed: true, branch, localBranch: currentBranch || null };
+    } catch (error) {
+      const message = String(error.message || '');
+      if (message.includes('error in libcrypto') || message.includes('Load key')) {
+        throw new Error(
+          'SSH key could not be loaded. Use full private key text with real new lines (or escaped \\n), or use remote_ssh_key_base64, and verify key type.'
+        );
+      }
+      if (message.includes('Permission denied (publickey)')) {
+        throw new Error(
+          'Permission denied by remote repository. Verify deploy key/user key has write access to target repository.'
+        );
+      }
+      throw error;
+    }
   }
 }
 
