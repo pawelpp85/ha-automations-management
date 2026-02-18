@@ -14,7 +14,7 @@ class GitBackupService {
     this.ensureRepo();
   }
 
-  git(args, envPatch = {}) {
+  gitRaw(args, envPatch = {}) {
     const env = {
       ...process.env,
       ...envPatch,
@@ -24,7 +24,11 @@ class GitBackupService {
       cwd: this.repoDir,
       env,
       encoding: 'utf8',
-    }).trim();
+    });
+  }
+
+  git(args, envPatch = {}) {
+    return this.gitRaw(args, envPatch).trim();
   }
 
   ensureRepo() {
@@ -66,6 +70,30 @@ class GitBackupService {
     const fileName = `${this.normalizeId(automationId)}.yaml`;
     const base = status === 'quarantine' ? this.quarantineDir : this.activeDir;
     return path.join(base, fileName);
+  }
+
+  relativeYamlPath(status, automationId) {
+    return path.relative(this.repoDir, this.yamlPath(status, automationId)).split(path.sep).join('/');
+  }
+
+  fileExists(status, automationId) {
+    return fs.existsSync(this.yamlPath(status, automationId));
+  }
+
+  readYamlText(status, automationId) {
+    const targetPath = this.yamlPath(status, automationId);
+    if (!fs.existsSync(targetPath)) {
+      return null;
+    }
+
+    return fs.readFileSync(targetPath, 'utf8');
+  }
+
+  writeYamlText(status, automationId, yamlText) {
+    const outputPath = this.yamlPath(status, automationId);
+    const normalized = String(yamlText || '');
+    atomicWrite(outputPath, normalized.endsWith('\n') ? normalized : `${normalized}\n`);
+    return outputPath;
   }
 
   writeYaml(status, automationId, config) {
@@ -115,6 +143,45 @@ class GitBackupService {
     atomicWrite(path.join(this.metadataDir, 'automations.json'), JSON.stringify(payload, null, 2));
   }
 
+  listHistoryForPaths(relativePaths, limit = 40) {
+    const paths = (relativePaths || []).filter(Boolean);
+    if (!paths.length) {
+      return [];
+    }
+
+    try {
+      const raw = this.gitRaw(
+        ['log', '-n', String(limit), '--pretty=format:%H%x09%cI%x09%s', '--', ...paths]
+      ).trim();
+
+      if (!raw) {
+        return [];
+      }
+
+      return raw
+        .split('\n')
+        .map((line) => {
+          const [commit = '', at = '', ...messageParts] = line.split('\t');
+          return {
+            commit,
+            at,
+            message: messageParts.join('\t'),
+          };
+        })
+        .filter((entry) => entry.commit);
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  readFileAtCommit(commit, relativePath) {
+    try {
+      return this.gitRaw(['show', `${commit}:${relativePath}`]);
+    } catch (_error) {
+      return null;
+    }
+  }
+
   hasChanges() {
     const status = this.git(['status', '--porcelain']);
     return status.length > 0;
@@ -123,10 +190,12 @@ class GitBackupService {
   commit(message) {
     this.git(['add', '-A']);
     if (!this.hasChanges()) {
+      console.log('Git backup commit skipped: no changes to commit.');
       return { created: false };
     }
 
     this.git(['commit', '-m', message]);
+    console.log(`Git backup commit created: "${message}"`);
     return { created: true };
   }
 
@@ -150,8 +219,27 @@ class GitBackupService {
       this.git(['remote', 'set-url', 'origin', url]);
     }
 
-    this.git(['push', '-u', 'origin', branch], envPatch);
-    return { pushed: true, branch };
+    try {
+      this.git(['rev-parse', '--verify', 'HEAD']);
+    } catch (_error) {
+      throw new Error('Backup repository has no commits yet. Create a commit before push.');
+    }
+
+    let currentBranch = '';
+    try {
+      currentBranch = this.git(['rev-parse', '--abbrev-ref', 'HEAD']);
+    } catch (_error) {
+      currentBranch = '';
+    }
+
+    console.log(
+      `Git backup push: remote=origin url=${this.options.remote_url} local_branch=${currentBranch || 'detached'} target_branch=${branch}`
+    );
+
+    // Push from current HEAD to the configured target branch. This works even
+    // when local branch is still "master" and target branch is "main".
+    this.git(['push', '-u', 'origin', `HEAD:${branch}`], envPatch);
+    return { pushed: true, branch, localBranch: currentBranch || null };
   }
 }
 

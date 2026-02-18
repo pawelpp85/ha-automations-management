@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0b10 - 2026-02-18
+
+- Added filter suggestions (`datalist`) for automation name, category, label, and room.
+- Added quick `Filter` actions from automation row metadata fields (category/label/room).
+- Added `Raw configuration` tab with YAML editor, Git history list, history version loading, and save-to-commit flow.
+- Added filter by automation name in main view.
+- Updated `Open edit` to use HA edit identifier (`edit_id`/`unique_id`) when available, with fallback to entity ID.
+- Added warning management: clear single warning or clear all warnings from UI.
+- Added safer quarantine logic: verify missing automation in HA before auto-quarantine to prevent false positives.
+- Added metadata import from YAML (`category`, `labels`, `room`, including `metadata`/`meta` section).
+- Improved Git push diagnostics and branch handling (`HEAD:target_branch`) to avoid `src refspec main does not match any`.
+- Bumped add-on metadata version to `1.0.0b10`.
+
 ## 1.0.0b9 - 2026-02-18
 
 - Fixed ingress UI API path resolution (no more frontend `404` from Home Assistant root `/api/*` routes).

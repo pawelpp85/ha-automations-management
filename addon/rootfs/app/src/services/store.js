@@ -98,6 +98,16 @@ class StoreService {
   listWarnings() {
     return this.state.warnings;
   }
+
+  removeWarning(id) {
+    this.state.warnings = this.state.warnings.filter((entry) => entry.id !== id);
+    this.save();
+  }
+
+  clearWarnings() {
+    this.state.warnings = [];
+    this.save();
+  }
 }
 
 module.exports = {

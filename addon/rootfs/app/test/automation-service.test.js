@@ -34,6 +34,10 @@ class FakeHaClient {
   async upsertAutomation(id, config) {
     this.upserted.push({ id, config });
   }
+
+  async automationExists(entityId) {
+    return this.items.some((item) => (item.entity_id || item.id) === entityId);
+  }
 }
 
 class FakeGitBackup {

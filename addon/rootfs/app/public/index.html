@@ -168,9 +168,43 @@
 
     .filters {
       display: grid;
-      grid-template-columns: repeat(3, minmax(120px, 1fr));
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
       gap: 0.55rem;
       width: min(700px, 100%);
+    }
+
+    .meta-tools {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      margin-top: 0.35rem;
+    }
+
+    .meta-tools button {
+      padding: 0.28rem 0.52rem;
+      border-radius: 8px;
+      font-size: 0.78rem;
+    }
+
+    .raw-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 0.7rem;
+    }
+
+    .raw-history-item {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0.45rem;
+      margin-bottom: 0.45rem;
+      background: var(--panel);
+    }
+
+    .raw-history-item small {
+      color: var(--muted);
+      display: block;
+      margin: 0.2rem 0 0.35rem;
+      word-break: break-all;
     }
 
     input, select, textarea {
@@ -283,6 +317,10 @@
         grid-template-columns: 1fr;
       }
 
+      .raw-grid {
+        grid-template-columns: 1fr;
+      }
+
       table, thead, tbody, tr, th, td {
         display: block;
       }
@@ -325,6 +363,7 @@
         <button data-tab="automations" class="active">Automations</button>
         <button data-tab="devices">Devices</button>
         <button data-tab="quarantine">Quarantine</button>
+        <button data-tab="raw">Raw configuration</button>
       </div>
       <div id="warning-banner" class="warning-banner"></div>
     </section>
@@ -333,10 +372,15 @@
       <div class="view-head">
         <strong>Automation Catalog</strong>
         <div class="filters">
-          <input id="f-category" placeholder="Filter category" />
-          <input id="f-label" placeholder="Filter label" />
-          <input id="f-room" placeholder="Filter room" />
+          <input id="f-name" list="name-options" placeholder="Filter automation name" />
+          <input id="f-category" list="category-options" placeholder="Filter category" />
+          <input id="f-label" list="label-options" placeholder="Filter label" />
+          <input id="f-room" list="room-options" placeholder="Filter room" />
         </div>
+        <datalist id="name-options"></datalist>
+        <datalist id="category-options"></datalist>
+        <datalist id="label-options"></datalist>
+        <datalist id="room-options"></datalist>
       </div>
       <table>
         <thead>
@@ -379,6 +423,35 @@
         <tbody id="quarantine-body"></tbody>
       </table>
     </section>
+
+    <section id="view-raw" class="view">
+      <div class="view-head">
+        <strong>Raw Configuration</strong>
+        <span class="hint">Edit YAML backup and browse Git history snapshots.</span>
+      </div>
+      <div style="padding: 0.9rem;">
+        <div class="filters" style="margin-bottom: 0.6rem;">
+          <select id="raw-select"></select>
+          <button id="raw-load" class="primary" title="Load selected automation YAML and history.">Load</button>
+          <label style="display:flex;align-items:center;gap:0.35rem;">
+            <input id="raw-apply-ha" type="checkbox" style="width:auto;" />
+            Apply to HA
+          </label>
+          <input id="raw-commit-msg" placeholder="Commit message for raw configuration change" />
+        </div>
+        <div class="actions" style="margin-bottom: 0.6rem;">
+          <button id="raw-save" class="primary" title="Save YAML into backup and create commit.">Save YAML</button>
+          <span id="raw-status" class="hint">Nothing loaded.</span>
+        </div>
+        <div class="raw-grid">
+          <textarea id="raw-editor" rows="22" placeholder="Select automation and load YAML..."></textarea>
+          <div style="border:1px solid var(--line);border-radius:10px;background:var(--bg-soft);padding:0.55rem;">
+            <strong style="display:block;margin-bottom:0.45rem;">History</strong>
+            <div id="raw-history"></div>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 
   <div id="toast" class="toast"></div>
@@ -389,14 +462,29 @@
       devices: [],
       warnings: [],
       inFlight: new Set(),
-      filters: { category: '', label: '', room: '' },
+      filters: { name: '', category: '', label: '', room: '' },
+      raw: {
+        selectedId: '',
+        loadedId: '',
+        status: '',
+        history: [],
+      },
     };
 
     function byId(id) {
       return document.getElementById(id);
     }
 
-    function showToast(message, timeout = 3400) {
+    function escapeHtml(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function showToast(message, timeout = 3600) {
       const toast = byId('toast');
       toast.textContent = message;
       toast.classList.add('visible');
@@ -438,7 +526,6 @@
       if (!response.ok) {
         throw new Error(payload.error || `Request failed: ${response.status}`);
       }
-
       return payload;
     }
 
@@ -447,13 +534,61 @@
     }
 
     function parseLabels(text) {
-      return text.split(',').map((v) => v.trim()).filter(Boolean);
+      return String(text || '').split(',').map((v) => v.trim()).filter(Boolean);
     }
 
-    function openAutomationEditTab(automationId) {
-      const encoded = encodeURIComponent(automationId);
-      const url = `/config/automation/edit/${encoded}`;
+    function setDatalist(id, values) {
+      byId(id).innerHTML = values.map((value) => `<option value="${escapeHtml(value)}"></option>`).join('');
+    }
+
+    function renderFilterSuggestions() {
+      const names = new Set();
+      const categories = new Set();
+      const labels = new Set();
+      const rooms = new Set();
+
+      state.automations.forEach((item) => {
+        if (item.alias) names.add(item.alias);
+        if (item.id) names.add(item.id);
+        if (item.category) categories.add(item.category);
+        if (item.room) rooms.add(item.room);
+        (item.labels || []).forEach((label) => {
+          if (label) labels.add(label);
+        });
+      });
+
+      setDatalist('name-options', [...names].sort((a, b) => a.localeCompare(b)));
+      setDatalist('category-options', [...categories].sort((a, b) => a.localeCompare(b)));
+      setDatalist('label-options', [...labels].sort((a, b) => a.localeCompare(b)));
+      setDatalist('room-options', [...rooms].sort((a, b) => a.localeCompare(b)));
+    }
+
+    function applyFilter(key, value) {
+      state.filters[key] = value || '';
+      const input = byId(`f-${key}`);
+      if (input) input.value = state.filters[key];
+      renderAutomations();
+      renderQuarantine();
+    }
+
+    function openAutomationEditTab(editId, fallbackId) {
+      const target = String(editId || '').trim() || String(fallbackId || '').trim();
+      if (!target) {
+        showToast('No automation edit identifier available.');
+        return;
+      }
+
+      const url = `${window.location.origin}/config/automation/edit/${encodeURIComponent(target)}`;
       window.open(url, '_blank', 'noopener');
+    }
+
+    function selectTab(tab) {
+      document.querySelectorAll('.tabs button').forEach((button) => {
+        button.classList.toggle('active', button.dataset.tab === tab);
+      });
+      document.querySelectorAll('.view').forEach((view) => view.classList.remove('visible'));
+      const selected = byId(`view-${tab}`);
+      if (selected) selected.classList.add('visible');
     }
 
     async function refresh() {
@@ -467,10 +602,12 @@
       state.devices = devices.data || [];
       state.warnings = warnings.data || [];
 
+      renderFilterSuggestions();
       renderWarnings();
       renderAutomations();
       renderDevices();
       renderQuarantine();
+      renderRawSelect();
     }
 
     function renderWarnings() {
@@ -482,19 +619,45 @@
       }
 
       box.classList.add('visible');
-      box.innerHTML = `<strong>Warnings</strong><br>${state.warnings.slice(0, 3).map((w) => w.message).join('<br>')}`;
+      box.innerHTML = `
+        <div class="actions" style="justify-content:space-between;align-items:center;margin-bottom:0.45rem;">
+          <strong>Warnings</strong>
+          <button data-warning-action="clear-all" title="Clear all warnings from this panel.">Clear all</button>
+        </div>
+        ${state.warnings.slice(0, 8).map((warning) => `
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.5rem;margin-bottom:0.35rem;">
+            <span>${escapeHtml(warning.message)}</span>
+            <button data-warning-action="clear-one" data-warning-id="${escapeHtml(warning.id)}" title="Clear this warning.">Clear</button>
+          </div>
+        `).join('')}
+      `;
+    }
+
+    async function clearWarning(id) {
+      await api(`/api/warnings/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      await refresh();
+    }
+
+    async function clearAllWarnings() {
+      await api('/api/warnings', { method: 'DELETE' });
+      await refresh();
     }
 
     function filterAutomation(item) {
+      const n = state.filters.name.trim().toLowerCase();
       const c = state.filters.category.trim().toLowerCase();
       const l = state.filters.label.trim().toLowerCase();
       const r = state.filters.room.trim().toLowerCase();
 
-      const category = (item.category || '').toLowerCase();
-      const room = (item.room || '').toLowerCase();
+      const nameText = `${item.alias || ''} ${item.id || ''}`.toLowerCase();
+      const category = String(item.category || '').toLowerCase();
+      const room = String(item.room || '').toLowerCase();
       const labels = (item.labels || []).join(' ').toLowerCase();
 
-      return (!c || category.includes(c)) && (!l || labels.includes(l)) && (!r || room.includes(r));
+      return (!n || nameText.includes(n))
+        && (!c || category.includes(c))
+        && (!l || labels.includes(l))
+        && (!r || room.includes(r));
     }
 
     function renderAutomations() {
@@ -504,23 +667,45 @@
       body.innerHTML = rows.map((item) => {
         const active = item.status !== 'quarantine';
         const rowClass = active ? '' : 'quarantine';
+        const category = item.category || '';
+        const room = item.room || '';
+        const labelsArray = Array.isArray(item.labels) ? item.labels : [];
+        const labelsText = normalizeLabels(labelsArray);
+        const editId = item.editId || item.haUniqueId || '';
+
         return `
           <tr class="${rowClass}">
             <td data-label="Automation">
-              <strong>${item.alias || item.id}</strong><br>
-              <small>${item.id}</small>
+              <strong>${escapeHtml(item.alias || item.id)}</strong><br>
+              <small>${escapeHtml(item.id)}</small>
             </td>
             <td data-label="Status">
               <span class="status ${active ? 'active' : 'quarantine'}">${active ? 'active' : 'quarantine'}</span>
             </td>
-            <td data-label="Category"><input data-field="category" data-id="${item.id}" value="${item.category || ''}" placeholder="e.g. climate" /></td>
-            <td data-label="Labels"><input data-field="labels" data-id="${item.id}" value="${normalizeLabels(item.labels)}" placeholder="comma,separated" /></td>
-            <td data-label="Room"><input data-field="room" data-id="${item.id}" value="${item.room || ''}" placeholder="e.g. kitchen" /></td>
+            <td data-label="Category">
+              <input data-field="category" data-id="${escapeHtml(item.id)}" value="${escapeHtml(category)}" placeholder="e.g. climate" />
+              <div class="meta-tools">
+                <button data-action="filter-category" data-value="${escapeHtml(category)}" ${category ? '' : 'disabled'} title="Filter by this category.">Filter</button>
+              </div>
+            </td>
+            <td data-label="Labels">
+              <input data-field="labels" data-id="${escapeHtml(item.id)}" value="${escapeHtml(labelsText)}" placeholder="comma,separated" />
+              <div class="meta-tools">
+                ${labelsArray.map((label) => `<button data-action="filter-label" data-value="${escapeHtml(label)}" title="Filter by this label.">Filter: ${escapeHtml(label)}</button>`).join('')}
+              </div>
+            </td>
+            <td data-label="Room">
+              <input data-field="room" data-id="${escapeHtml(item.id)}" value="${escapeHtml(room)}" placeholder="e.g. kitchen" />
+              <div class="meta-tools">
+                <button data-action="filter-room" data-value="${escapeHtml(room)}" ${room ? '' : 'disabled'} title="Filter by this room.">Filter</button>
+              </div>
+            </td>
             <td data-label="Actions">
               <div class="actions">
-                <button class="primary" data-action="save-meta" data-id="${item.id}" title="Save category, labels, and room metadata.">Save meta</button>
-                <button data-action="open-edit" data-id="${item.id}" title="Open Home Assistant automation edit page in a new tab.">Open edit</button>
-                <button class="warn" data-action="quarantine" data-id="${item.id}" ${active ? '' : 'disabled'} title="Move automation to quarantine and remove it from HA after confirmation.">Quarantine</button>
+                <button class="primary" data-action="save-meta" data-id="${escapeHtml(item.id)}" title="Save category, labels, and room metadata.">Save meta</button>
+                <button data-action="open-edit" data-id="${escapeHtml(item.id)}" data-edit-id="${escapeHtml(editId)}" title="Open Home Assistant automation edit page in a new tab.">Open edit</button>
+                <button data-action="open-raw" data-id="${escapeHtml(item.id)}" title="Open raw YAML editor for this automation.">Raw</button>
+                <button class="warn" data-action="quarantine" data-id="${escapeHtml(item.id)}" ${active ? '' : 'disabled'} title="Move automation to quarantine and remove it from HA after confirmation.">Quarantine</button>
               </div>
             </td>
           </tr>
@@ -538,14 +723,15 @@
       list.innerHTML = state.devices.map((device) => `
         <div class="device-card">
           <div class="device-title">
-            <span>${device.deviceId}</span>
+            <span>${escapeHtml(device.deviceId)}</span>
             <span class="chip">${device.automationIds.length} automations</span>
           </div>
           <div class="device-links">
             ${device.automationIds.map((a) => `
-              <button data-action="open-edit" data-id="${a.id}" title="Open automation edit in new tab.">
-                ${a.alias || a.id} (${a.status})
+              <button data-action="open-edit" data-id="${escapeHtml(a.id)}" data-edit-id="${escapeHtml(a.editId || '')}" title="Open automation edit in new tab.">
+                ${escapeHtml(a.alias || a.id)} (${escapeHtml(a.status)})
               </button>
+              <button data-action="open-raw" data-id="${escapeHtml(a.id)}" title="Open raw YAML editor.">Raw</button>
             `).join('')}
           </div>
         </div>
@@ -559,16 +745,17 @@
       body.innerHTML = rows.map((item) => `
         <tr class="quarantine">
           <td data-label="Automation">
-            <strong>${item.alias || item.id}</strong><br>
-            <small>${item.id}</small>
+            <strong>${escapeHtml(item.alias || item.id)}</strong><br>
+            <small>${escapeHtml(item.id)}</small>
           </td>
-          <td data-label="Category">${item.category || ''}</td>
-          <td data-label="Labels">${normalizeLabels(item.labels)}</td>
-          <td data-label="Room">${item.room || ''}</td>
+          <td data-label="Category">${escapeHtml(item.category || '')}</td>
+          <td data-label="Labels">${escapeHtml(normalizeLabels(item.labels))}</td>
+          <td data-label="Room">${escapeHtml(item.room || '')}</td>
           <td data-label="Actions">
             <div class="actions">
-              <button class="primary" data-action="restore" data-id="${item.id}" title="Restore automation from quarantine backup into HA.">Restore</button>
-              <button class="danger" data-action="delete-quarantine" data-id="${item.id}" title="Permanently delete quarantine backup entry after confirmation.">Permanent delete</button>
+              <button data-action="open-raw" data-id="${escapeHtml(item.id)}" title="Open raw YAML editor.">Raw</button>
+              <button class="primary" data-action="restore" data-id="${escapeHtml(item.id)}" title="Restore automation from quarantine backup into HA.">Restore</button>
+              <button class="danger" data-action="delete-quarantine" data-id="${escapeHtml(item.id)}" title="Permanently delete quarantine backup entry after confirmation.">Permanent delete</button>
             </div>
           </td>
         </tr>
@@ -576,6 +763,129 @@
 
       if (!rows.length) {
         body.innerHTML = '<tr><td colspan="5">No quarantined automations.</td></tr>';
+      }
+    }
+
+    function renderRawSelect() {
+      const select = byId('raw-select');
+      const options = [...state.automations].sort((a, b) => (a.alias || a.id).localeCompare(b.alias || b.id));
+      if (!options.length) {
+        select.innerHTML = '<option value="">No automations available</option>';
+        select.disabled = true;
+        return;
+      }
+
+      select.disabled = false;
+      const currentValue = state.raw.selectedId || select.value;
+      select.innerHTML = options.map((item) => (
+        `<option value="${escapeHtml(item.id)}">${escapeHtml(item.alias || item.id)} (${escapeHtml(item.id)})</option>`
+      )).join('');
+
+      const exists = options.some((item) => item.id === currentValue);
+      const nextValue = exists ? currentValue : options[0].id;
+      state.raw.selectedId = nextValue;
+      select.value = nextValue;
+    }
+
+    function renderRawHistory() {
+      const container = byId('raw-history');
+      const id = state.raw.loadedId;
+      const history = state.raw.history || [];
+
+      if (!id || !history.length) {
+        container.innerHTML = '<div class="hint">No history entries yet.</div>';
+        return;
+      }
+
+      container.innerHTML = history.map((entry) => {
+        const shortCommit = String(entry.commit).slice(0, 8);
+        const at = entry.at ? new Date(entry.at).toLocaleString() : '';
+        return `
+          <div class="raw-history-item">
+            <strong>${shortCommit}</strong>
+            <small>${escapeHtml(at)}<br>${escapeHtml(entry.message || '')}</small>
+            <button data-action="raw-load-version" data-id="${escapeHtml(id)}" data-commit="${escapeHtml(entry.commit)}" title="Load this historical version into editor.">Load version</button>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function loadRawConfiguration(id) {
+      if (!id) return;
+
+      state.raw.selectedId = id;
+      setBusy('raw-load', true);
+      try {
+        const result = await api(`/api/raw/${encodeURIComponent(id)}`);
+        state.raw.loadedId = id;
+        state.raw.status = result.data.status || '';
+        state.raw.history = result.data.history || [];
+
+        byId('raw-editor').value = result.data.yamlText || '';
+        byId('raw-status').textContent = `Loaded ${id} (${state.raw.status})`;
+        byId('raw-commit-msg').value = `feat(raw): update ${id}`;
+
+        const applyCheckbox = byId('raw-apply-ha');
+        applyCheckbox.checked = false;
+        applyCheckbox.disabled = state.raw.status !== 'active';
+
+        renderRawHistory();
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        setBusy('raw-load', false);
+      }
+    }
+
+    async function loadRawHistoryVersion(id, commit) {
+      if (!id || !commit) return;
+
+      setBusy('raw-history', true);
+      try {
+        const result = await api(`/api/raw/${encodeURIComponent(id)}/history/${encodeURIComponent(commit)}`);
+        byId('raw-editor').value = result.data.yamlText || '';
+        byId('raw-status').textContent = `Loaded version ${String(commit).slice(0, 8)} (${result.data.status || 'unknown'})`;
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        setBusy('raw-history', false);
+      }
+    }
+
+    async function saveRawConfiguration() {
+      const id = byId('raw-select').value;
+      if (!id) {
+        showToast('Select automation first.');
+        return;
+      }
+
+      const yamlText = byId('raw-editor').value;
+      const commitMessage = byId('raw-commit-msg').value;
+      const applyToHa = byId('raw-apply-ha').checked && !byId('raw-apply-ha').disabled;
+
+      setBusy('raw-save', true);
+      try {
+        const result = await api(`/api/raw/${encodeURIComponent(id)}`, {
+          method: 'POST',
+          body: JSON.stringify({
+            yamlText,
+            commitMessage,
+            applyToHa,
+          }),
+        });
+
+        if (result.data?.commit?.created) {
+          showToast(`Raw config saved and committed for ${id}`);
+        } else {
+          showToast(`Raw config saved for ${id}`);
+        }
+
+        await refresh();
+        await loadRawConfiguration(id);
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        setBusy('raw-save', false);
       }
     }
 
@@ -594,9 +904,7 @@
     }
 
     async function quarantine(id) {
-      const ok = window.confirm(
-        `Remove ${id} from Home Assistant and keep it in quarantine backup?`
-      );
+      const ok = window.confirm(`Remove ${id} from Home Assistant and keep it in quarantine backup?`);
       if (!ok) return;
 
       await api(`/api/automations/${encodeURIComponent(id)}/quarantine`, {
@@ -628,7 +936,7 @@
       try {
         const result = await api('/api/import', { method: 'POST' });
         showToast(
-          `Import done: changed=${result.importedCount || 0}, discovered=${result.total || 0}, failed=${result.failedCount || 0}`
+          `Import: changed=${result.importedCount || 0}, discovered=${result.total || 0}, failed=${result.failedCount || 0}`
         );
         await refresh();
       } catch (error) {
@@ -643,7 +951,7 @@
       try {
         const result = await api('/api/sync', { method: 'POST' });
         showToast(
-          `Sync done: changed=${result.importedCount || 0}, discovered=${result.total || 0}, failed=${result.failedCount || 0}`
+          `Sync: changed=${result.importedCount || 0}, discovered=${result.total || 0}, failed=${result.failedCount || 0}`
         );
         await refresh();
       } catch (error) {
@@ -685,19 +993,52 @@
       }
     }
 
+    async function openRawForAutomation(id) {
+      if (!id) return;
+      selectTab('raw');
+      byId('raw-select').value = id;
+      state.raw.selectedId = id;
+      await loadRawConfiguration(id);
+    }
+
     function onTableAction(event) {
       const target = event.target.closest('button[data-action]');
       if (!target) return;
 
       const action = target.dataset.action;
       const id = target.dataset.id;
+      const editId = target.dataset.editId;
 
       const run = async () => {
-        if (action === 'open-edit') openAutomationEditTab(id);
+        if (action === 'open-edit') openAutomationEditTab(editId, id);
+        if (action === 'open-raw') await openRawForAutomation(id);
         if (action === 'save-meta') await saveMeta(id);
         if (action === 'quarantine') await quarantine(id);
         if (action === 'restore') await restore(id);
         if (action === 'delete-quarantine') await deleteQuarantine(id);
+        if (action === 'filter-category') applyFilter('category', target.dataset.value || '');
+        if (action === 'filter-label') applyFilter('label', target.dataset.value || '');
+        if (action === 'filter-room') applyFilter('room', target.dataset.value || '');
+        if (action === 'raw-load-version') await loadRawHistoryVersion(id, target.dataset.commit);
+      };
+
+      run().catch((error) => showToast(error.message));
+    }
+
+    function onWarningAction(event) {
+      const target = event.target.closest('button[data-warning-action]');
+      if (!target) return;
+
+      const action = target.dataset.warningAction;
+      const run = async () => {
+        if (action === 'clear-all') {
+          await clearAllWarnings();
+          showToast('All warnings cleared');
+        }
+        if (action === 'clear-one') {
+          await clearWarning(target.dataset.warningId || '');
+          showToast('Warning cleared');
+        }
       };
 
       run().catch((error) => showToast(error.message));
@@ -705,34 +1046,31 @@
 
     function setupTabs() {
       document.querySelectorAll('.tabs button').forEach((button) => {
-        button.addEventListener('click', () => {
-          document.querySelectorAll('.tabs button').forEach((b) => b.classList.remove('active'));
-          button.classList.add('active');
-
-          const tab = button.dataset.tab;
-          document.querySelectorAll('.view').forEach((view) => view.classList.remove('visible'));
-          byId(`view-${tab}`).classList.add('visible');
-        });
+        button.addEventListener('click', () => selectTab(button.dataset.tab));
       });
     }
 
     function setupFilters() {
-      byId('f-category').addEventListener('input', (e) => {
-        state.filters.category = e.target.value;
-        renderAutomations();
-        renderQuarantine();
+      ['name', 'category', 'label', 'room'].forEach((key) => {
+        byId(`f-${key}`).addEventListener('input', (event) => {
+          state.filters[key] = event.target.value;
+          renderAutomations();
+          renderQuarantine();
+        });
+      });
+    }
+
+    function setupRawEditor() {
+      byId('raw-load').addEventListener('click', () => {
+        loadRawConfiguration(byId('raw-select').value).catch((error) => showToast(error.message));
       });
 
-      byId('f-label').addEventListener('input', (e) => {
-        state.filters.label = e.target.value;
-        renderAutomations();
-        renderQuarantine();
+      byId('raw-save').addEventListener('click', () => {
+        saveRawConfiguration().catch((error) => showToast(error.message));
       });
 
-      byId('f-room').addEventListener('input', (e) => {
-        state.filters.room = e.target.value;
-        renderAutomations();
-        renderQuarantine();
+      byId('raw-select').addEventListener('change', (event) => {
+        state.raw.selectedId = event.target.value;
       });
     }
 
@@ -744,9 +1082,12 @@
     byId('automations-body').addEventListener('click', onTableAction);
     byId('devices-list').addEventListener('click', onTableAction);
     byId('quarantine-body').addEventListener('click', onTableAction);
+    byId('raw-history').addEventListener('click', onTableAction);
+    byId('warning-banner').addEventListener('click', onWarningAction);
 
     setupTabs();
     setupFilters();
+    setupRawEditor();
 
     refresh().catch((error) => showToast(error.message));
   </script>

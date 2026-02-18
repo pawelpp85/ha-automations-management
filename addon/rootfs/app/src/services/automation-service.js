@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const fs = require('fs');
+const yaml = require('js-yaml');
 
 function extractDeviceRefs(node, collector = new Set()) {
   if (Array.isArray(node)) {
@@ -25,6 +26,32 @@ function extractDeviceRefs(node, collector = new Set()) {
   return collector;
 }
 
+function normalizeString(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+  return value.trim();
+}
+
+function normalizeLabels(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry).trim()).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value.split(',').map((entry) => entry.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function extractClassificationFromConfig(config) {
+  const metadata = config && typeof config === 'object' ? (config.metadata || config.meta || {}) : {};
+  const category = normalizeString(config?.category || metadata.category || '');
+  const room = normalizeString(config?.room || metadata.room || '');
+  const labels = normalizeLabels(config?.labels || metadata.labels || []);
+
+  return { category, room, labels };
+}
+
 class AutomationService {
   constructor({ store, haClient, gitBackup }) {
     this.store = store;
@@ -34,6 +61,20 @@ class AutomationService {
 
   buildYamlHash(payload) {
     return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  }
+
+  resolveYamlStatus(record) {
+    const preferred = record.status === 'quarantine' ? 'quarantine' : 'active';
+    if (this.gitBackup.fileExists(preferred, record.id)) {
+      return preferred;
+    }
+
+    const fallback = preferred === 'active' ? 'quarantine' : 'active';
+    if (this.gitBackup.fileExists(fallback, record.id)) {
+      return fallback;
+    }
+
+    return preferred;
   }
 
   async importFromHa({ automaticCommit = false } = {}) {
@@ -84,6 +125,7 @@ class AutomationService {
         seenIds.add(automationId);
 
         const config = (await this.haClient.getAutomationConfig(automationId)) || automation.raw_config || automation;
+        const importedClassification = extractClassificationFromConfig(config);
         const yamlHash = this.buildYamlHash(config);
         const previouslyMissing = existing && existing.status === 'quarantine' && existing.autoQuarantined;
 
@@ -91,6 +133,8 @@ class AutomationService {
 
         this.store.upsertAutomation(automationId, {
           id: automationId,
+          entityId: automation.entity_id || existing?.entityId || automationId,
+          editId: automation.edit_id || automation.ha_unique_id || existing?.editId || '',
           alias: automation.alias || automation.name || automationId,
           yamlHash,
           lastImportedAt: new Date().toISOString(),
@@ -98,9 +142,9 @@ class AutomationService {
           status: 'active',
           autoQuarantined: false,
           haUniqueId: automation.ha_unique_id || existing?.haUniqueId || '',
-          category: existing?.category || '',
-          labels: existing?.labels || [],
-          room: existing?.room || '',
+          category: importedClassification.category || existing?.category || '',
+          labels: importedClassification.labels.length ? importedClassification.labels : (existing?.labels || []),
+          room: importedClassification.room || existing?.room || '',
         });
 
         if (!existing || existing.yamlHash !== yamlHash || previouslyMissing) {
@@ -115,6 +159,11 @@ class AutomationService {
     const known = this.store.listAutomations();
     for (const record of known) {
       if (record.status === 'active' && !seenIds.has(record.id)) {
+        const existsInHa = await this.haClient.automationExists(record.entityId || record.id);
+        if (existsInHa) {
+          continue;
+        }
+
         this.store.upsertAutomation(record.id, {
           status: 'quarantine',
           autoQuarantined: true,
@@ -164,6 +213,123 @@ class AutomationService {
 
   listWarnings() {
     return this.store.listWarnings();
+  }
+
+  clearWarning(id) {
+    this.store.removeWarning(id);
+    return { removed: true, id };
+  }
+
+  clearWarnings() {
+    this.store.clearWarnings();
+    return { removedAll: true };
+  }
+
+  getRawConfiguration(id) {
+    const record = this.store.getAutomation(id);
+    if (!record) {
+      throw new Error('Automation does not exist in local catalog.');
+    }
+
+    const status = this.resolveYamlStatus(record);
+    const yamlText = this.gitBackup.readYamlText(status, id);
+    if (yamlText == null) {
+      throw new Error('Backup YAML file is missing for selected automation.');
+    }
+
+    const activeRelPath = this.gitBackup.relativeYamlPath('active', id);
+    const quarantineRelPath = this.gitBackup.relativeYamlPath('quarantine', id);
+    const historyRaw = this.gitBackup.listHistoryForPaths([activeRelPath, quarantineRelPath], 80);
+    const seenCommits = new Set();
+    const history = historyRaw.filter((entry) => {
+      if (seenCommits.has(entry.commit)) {
+        return false;
+      }
+      seenCommits.add(entry.commit);
+      return true;
+    });
+
+    return {
+      id,
+      status,
+      alias: record.alias || id,
+      yamlText,
+      history,
+      canApplyToHa: status === 'active',
+    };
+  }
+
+  getRawConfigurationVersion(id, commit) {
+    if (!commit) {
+      throw new Error('Commit hash is required.');
+    }
+
+    const activeRelPath = this.gitBackup.relativeYamlPath('active', id);
+    const quarantineRelPath = this.gitBackup.relativeYamlPath('quarantine', id);
+
+    const activeText = this.gitBackup.readFileAtCommit(commit, activeRelPath);
+    if (activeText != null) {
+      return {
+        commit,
+        status: 'active',
+        yamlText: activeText,
+      };
+    }
+
+    const quarantineText = this.gitBackup.readFileAtCommit(commit, quarantineRelPath);
+    if (quarantineText != null) {
+      return {
+        commit,
+        status: 'quarantine',
+        yamlText: quarantineText,
+      };
+    }
+
+    throw new Error('Selected commit does not contain this automation YAML.');
+  }
+
+  async updateRawConfiguration(id, payload) {
+    const record = this.store.getAutomation(id);
+    if (!record) {
+      throw new Error('Automation does not exist in local catalog.');
+    }
+
+    const yamlText = String(payload?.yamlText || '');
+    const parsed = yaml.load(yamlText);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Raw configuration must be a valid YAML object.');
+    }
+
+    const status = this.resolveYamlStatus(record);
+    this.gitBackup.writeYamlText(status, id, yamlText);
+
+    if (payload?.applyToHa) {
+      if (status !== 'active') {
+        throw new Error('Cannot apply quarantined automation directly to HA. Restore it first.');
+      }
+      const targetId = record.entityId || record.id;
+      await this.haClient.upsertAutomation(targetId, parsed);
+    }
+
+    const yamlHash = this.buildYamlHash(parsed);
+    const importedClassification = extractClassificationFromConfig(parsed);
+    this.store.upsertAutomation(id, {
+      yamlHash,
+      updatedAt: new Date().toISOString(),
+      category: importedClassification.category || record.category || '',
+      labels: importedClassification.labels.length ? importedClassification.labels : (record.labels || []),
+      room: importedClassification.room || record.room || '',
+    });
+
+    this.gitBackup.writeMetadata(this.store.state);
+    const commitMessage = String(payload?.commitMessage || '').trim() || `feat(raw): update automation ${id}`;
+    const commit = this.gitBackup.commit(commitMessage);
+
+    return {
+      id,
+      status,
+      commit,
+    };
   }
 
   updateMetadata(id, payload) {
@@ -283,6 +449,7 @@ class AutomationService {
 
         output[ref].automationIds.push({
           id: record.id,
+          editId: record.editId || '',
           alias: record.alias || record.id,
           status: record.status,
           category: record.category || '',

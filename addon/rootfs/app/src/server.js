@@ -22,14 +22,14 @@ app.use(express.static(path.join(__dirname, '../public')));
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
-    version: '1.0.0b9',
+    version: '1.0.0b10',
     startedAt: process.uptime(),
   });
 });
 
 app.get('/api/config', (_req, res) => {
   res.json({
-    version: '1.0.0b9',
+    version: '1.0.0b10',
     syncIntervalSeconds: options.sync_interval_seconds,
     remoteEnabled: options.remote_enabled,
   });
@@ -51,6 +51,51 @@ app.get('/api/warnings', (_req, res) => {
   res.json({
     data: automationService.listWarnings(),
   });
+});
+
+app.delete('/api/warnings/:id', (req, res) => {
+  try {
+    const data = automationService.clearWarning(req.params.id);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.delete('/api/warnings', (_req, res) => {
+  try {
+    const data = automationService.clearWarnings();
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/raw/:id', (req, res) => {
+  try {
+    const data = automationService.getRawConfiguration(req.params.id);
+    res.json({ data });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/raw/:id/history/:commit', (req, res) => {
+  try {
+    const data = automationService.getRawConfigurationVersion(req.params.id, req.params.commit);
+    res.json({ data });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/raw/:id', async (req, res) => {
+  try {
+    const data = await automationService.updateRawConfiguration(req.params.id, req.body || {});
+    res.json({ data });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
 });
 
 app.post('/api/import', async (_req, res) => {

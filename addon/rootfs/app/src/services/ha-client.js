@@ -245,6 +245,7 @@ class HaClient {
 
         output.push({
           id: automationId,
+          edit_id: haUniqueId || '',
           alias,
           entity_id: entry.entity_id,
           ha_unique_id: haUniqueId,
@@ -308,6 +309,7 @@ class HaClient {
 
       return {
         id: entityId,
+        edit_id: String(entry.attributes?.id || ''),
         alias,
         entity_id: entityId,
         ha_unique_id: '',
@@ -339,18 +341,32 @@ class HaClient {
       try {
         const data = await this.request('/api/config/automation/config');
         const list = Array.isArray(data) ? data : [];
+        const normalized = [];
 
         for (const entry of list) {
           const rawId = entry.id || entry.entity_id;
           const id = entry.entity_id || (String(rawId || '').startsWith('automation.') ? rawId : `automation.${rawId}`);
           if (id) {
-            this.cachedConfigs.set(id, entry.raw_config || entry);
+            const rawConfig = entry.raw_config || entry;
+            this.cachedConfigs.set(id, rawConfig);
+            if (rawId && rawId !== id) {
+              this.cachedConfigs.set(String(rawId), rawConfig);
+            }
             const entityId = entry.entity_id || id;
             this.entityIdByAutomationId.set(id, entityId);
+
+            normalized.push({
+              id,
+              entity_id: entityId,
+              edit_id: rawId && String(rawId) !== String(entityId) ? String(rawId) : '',
+              ha_unique_id: rawId && String(rawId) !== String(entityId) ? String(rawId) : '',
+              alias: entry.alias || entry.name || rawConfig.alias || entityId,
+              raw_config: rawConfig,
+            });
           }
         }
 
-        return list;
+        return normalized;
       } catch (error) {
         if (isEndpointMissing(error)) {
           this.globalAutomationConfigApiSupported = false;
@@ -459,6 +475,23 @@ class HaClient {
           ...config,
         }),
       });
+    }
+  }
+
+  async automationExists(entityId) {
+    if (!entityId || !String(entityId).startsWith('automation.')) {
+      return false;
+    }
+
+    try {
+      await this.request(`/api/states/${encodeURIComponent(entityId)}`);
+      return true;
+    } catch (error) {
+      if (isEndpointMissing(error)) {
+        return false;
+      }
+      console.warn(`Could not verify automation existence for ${entityId}; skipping quarantine for safety.`, error.message);
+      return true;
     }
   }
 }
