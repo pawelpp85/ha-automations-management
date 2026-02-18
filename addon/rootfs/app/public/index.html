@@ -361,6 +361,35 @@
       font-weight: 600;
     }
 
+    .entity-devices {
+      margin-top: 0.35rem;
+      max-height: 4.6rem;
+      overflow: auto;
+      border-left: 1px solid rgba(255, 255, 255, 0.08);
+      padding-left: 0.45rem;
+    }
+
+    .entity-devices-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.26rem;
+    }
+
+    .entity-device-btn {
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.22);
+      color: color-mix(in srgb, var(--muted) 82%, var(--text));
+      font-size: 0.7rem;
+      line-height: 1.15;
+      padding: 0.16rem 0.42rem;
+    }
+
+    .entity-device-btn:hover {
+      border-color: rgba(255, 255, 255, 0.3);
+      color: var(--text);
+    }
+
     .labels-editor {
       display: flex;
       align-items: center;
@@ -445,6 +474,30 @@
 
     .status.disabled {
       color: var(--muted);
+    }
+
+    .sort-btn {
+      border: 0;
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .sort-btn .arrow {
+      color: var(--muted);
+      font-size: 0.82rem;
+      min-width: 0.8rem;
+      text-align: center;
+    }
+
+    .sort-btn.active .arrow {
+      color: var(--info);
     }
 
     .actions button[data-action="open-raw"] {
@@ -614,13 +667,6 @@
             <option value="disabled">Disabled</option>
             <option value="quarantine">Quarantine</option>
           </select>
-          <select id="f-sort" title="Sort automations by selected field.">
-            <option value="name">Sort: name</option>
-            <option value="status">Sort: status</option>
-            <option value="category">Sort: category</option>
-            <option value="room">Sort: room</option>
-            <option value="label">Sort: label</option>
-          </select>
         </div>
         <datalist id="name-options"></datalist>
         <datalist id="category-options"></datalist>
@@ -628,16 +674,7 @@
         <datalist id="room-options"></datalist>
       </div>
       <table>
-        <thead>
-          <tr>
-            <th>Automation</th>
-            <th>Status</th>
-            <th>Category</th>
-            <th>Labels</th>
-            <th>Room</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
+        <thead id="automations-head"></thead>
         <tbody id="automations-body"></tbody>
       </table>
     </section>
@@ -650,12 +687,6 @@
           <input id="sf-category" list="category-options" placeholder="Filter category" />
           <input id="sf-label" list="label-options" placeholder="Filter label" />
           <input id="sf-room" list="room-options" placeholder="Filter room" />
-          <select id="sf-sort" title="Sort scripts by selected field.">
-            <option value="name">Sort: name</option>
-            <option value="category">Sort: category</option>
-            <option value="room">Sort: room</option>
-            <option value="label">Sort: label</option>
-          </select>
         </div>
       </div>
       <table>
@@ -746,11 +777,15 @@
       warnings: [],
       inFlight: new Set(),
       metaInFlight: new Set(),
+      metaSaveTimers: new Map(),
       gitHasChanges: false,
       gitHasPendingPush: false,
       filters: { name: '', category: '', label: '', room: '', status: '', device: '' },
       scriptFilters: { name: '', category: '', label: '', room: '' },
-      sorting: { automations: 'name', scripts: 'name' },
+      sorting: {
+        automations: { field: 'name', direction: 'asc' },
+        scripts: { field: 'name', direction: 'asc' },
+      },
       raw: {
         selectedId: '',
         loadedId: '',
@@ -960,6 +995,64 @@
       setDatalist('device-options', [...devices].sort((a, b) => a.localeCompare(b)));
     }
 
+    function buildEntityDeviceMap() {
+      const result = new Map();
+
+      state.devices.forEach((device) => {
+        const sourceIds = Array.isArray(device.sourceDeviceIds)
+          ? device.sourceDeviceIds.map((value) => String(value || '').trim()).filter(Boolean)
+          : [];
+        const deviceId = String(device.deviceId || sourceIds[0] || '').trim();
+        const deviceName = String(device.deviceName || '').trim() || deviceId;
+        const query = deviceName || deviceId || sourceIds[0] || '';
+        const uniqueKey = `${deviceId}|${deviceName}`;
+
+        (Array.isArray(device.automationIds) ? device.automationIds : []).forEach((entry) => {
+          const entityId = String(entry?.id || '').trim();
+          if (!entityId || !query) {
+            return;
+          }
+
+          if (!result.has(entityId)) {
+            result.set(entityId, new Map());
+          }
+
+          const entityDevices = result.get(entityId);
+          if (!entityDevices.has(uniqueKey)) {
+            entityDevices.set(uniqueKey, {
+              name: deviceName,
+              id: deviceId,
+              query,
+            });
+          }
+        });
+      });
+
+      const normalized = new Map();
+      result.forEach((value, key) => {
+        const items = [...value.values()].sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' }));
+        normalized.set(key, items);
+      });
+
+      return normalized;
+    }
+
+    function renderEntityDeviceHints(entityDevices = []) {
+      if (!Array.isArray(entityDevices) || !entityDevices.length) {
+        return '';
+      }
+
+      return `
+        <div class="entity-devices">
+          <div class="entity-devices-list">
+            ${entityDevices.map((device) => (
+              `<button class="entity-device-btn" data-action="filter-device" data-device-query="${escapeHtml(device.query || '')}" title="Open Devices tab filtered by ${escapeHtml(device.name || device.id || 'device')}">${escapeHtml(device.name || device.id || 'device')}</button>`
+            )).join('')}
+          </div>
+        </div>
+      `;
+    }
+
     function getFilterState(scope) {
       return scope === 'script' ? state.scriptFilters : state.filters;
     }
@@ -1023,6 +1116,17 @@
 
       const url = `${window.location.origin}/config/devices/device/${encodeURIComponent(target)}`;
       window.open(url, '_blank', 'noopener');
+    }
+
+    function openDevicesWithFilter(query) {
+      const value = String(query || '').trim();
+      state.filters.device = value;
+      const input = byId('f-device');
+      if (input) {
+        input.value = value;
+      }
+      selectTab('devices');
+      renderDevices();
     }
 
     function selectTab(tab) {
@@ -1166,6 +1270,53 @@
         : (entityType === 'script' ? 'active' : (item.haEnabled === false ? 'disabled' : 'active'));
     }
 
+    function normalizeSortSpec(scope) {
+      const current = state.sorting?.[scope] || {};
+      const field = String(current.field || 'name');
+      const direction = current.direction === 'desc' ? 'desc' : 'asc';
+      return { field, direction };
+    }
+
+    function sortArrow(scope, field) {
+      const spec = normalizeSortSpec(scope);
+      if (spec.field !== field) {
+        return '↕';
+      }
+      return spec.direction === 'asc' ? '↑' : '↓';
+    }
+
+    function renderSortButton(scope, field, label) {
+      const spec = normalizeSortSpec(scope);
+      const active = spec.field === field ? 'active' : '';
+      return `
+        <button class="sort-btn ${active}" data-action="sort" data-sort-scope="${escapeHtml(scope)}" data-sort-field="${escapeHtml(field)}" title="Sort by ${escapeHtml(label)}">
+          <span>${escapeHtml(label)}</span>
+          <span class="arrow">${sortArrow(scope, field)}</span>
+        </button>
+      `;
+    }
+
+    function toggleSort(scope, field) {
+      const spec = normalizeSortSpec(scope);
+      if (spec.field === field) {
+        state.sorting[scope] = {
+          field,
+          direction: spec.direction === 'asc' ? 'desc' : 'asc',
+        };
+      } else {
+        state.sorting[scope] = {
+          field,
+          direction: 'asc',
+        };
+      }
+
+      if (scope === 'scripts') {
+        renderScripts();
+      } else {
+        renderAutomations();
+      }
+    }
+
     function getEntityLabelSortValue(item) {
       const labels = Array.isArray(item.labels) ? item.labels : [];
       return labels.map((value) => String(value || '').toLowerCase()).join(' ');
@@ -1191,7 +1342,14 @@
         && (!s || status === s);
     }
 
-    function sortEntities(items, sortField) {
+    function sortEntities(items, sortSpec) {
+      const normalizedSort = typeof sortSpec === 'string'
+        ? { field: sortSpec || 'name', direction: 'asc' }
+        : (sortSpec || { field: 'name', direction: 'asc' });
+      const sortField = String(normalizedSort.field || 'name');
+      const sortDirection = normalizedSort.direction === 'desc' ? 'desc' : 'asc';
+      const directionFactor = sortDirection === 'desc' ? -1 : 1;
+
       const statusOrder = {
         active: 0,
         disabled: 1,
@@ -1202,19 +1360,19 @@
       rows.sort((a, b) => {
         if (sortField === 'status') {
           const diff = (statusOrder[getEntityStatus(a)] ?? 99) - (statusOrder[getEntityStatus(b)] ?? 99);
-          if (diff !== 0) return diff;
+          if (diff !== 0) return diff * directionFactor;
         } else if (sortField === 'name') {
           const diff = String(a.alias || a.id || '').localeCompare(String(b.alias || b.id || ''), undefined, { sensitivity: 'base' });
-          if (diff !== 0) return diff;
+          if (diff !== 0) return diff * directionFactor;
         } else if (sortField === 'category') {
           const diff = String(a.category || '').localeCompare(String(b.category || ''), undefined, { sensitivity: 'base' });
-          if (diff !== 0) return diff;
+          if (diff !== 0) return diff * directionFactor;
         } else if (sortField === 'room') {
           const diff = String(a.room || '').localeCompare(String(b.room || ''), undefined, { sensitivity: 'base' });
-          if (diff !== 0) return diff;
+          if (diff !== 0) return diff * directionFactor;
         } else if (sortField === 'label') {
           const diff = getEntityLabelSortValue(a).localeCompare(getEntityLabelSortValue(b), undefined, { sensitivity: 'base' });
-          if (diff !== 0) return diff;
+          if (diff !== 0) return diff * directionFactor;
         }
 
         const aName = String(a.alias || a.id || '');
@@ -1226,9 +1384,24 @@
     }
 
     function renderAutomations() {
+      const head = byId('automations-head');
       const body = byId('automations-body');
       const filtered = state.automations.filter((item) => filterEntity(item, state.filters));
       const rows = sortEntities(filtered, state.sorting.automations);
+      const entityDeviceMap = buildEntityDeviceMap();
+
+      if (head) {
+        head.innerHTML = `
+          <tr>
+            <th>${renderSortButton('automations', 'name', 'Automation')}</th>
+            <th>${renderSortButton('automations', 'status', 'Status')}</th>
+            <th>${renderSortButton('automations', 'category', 'Category')}</th>
+            <th>${renderSortButton('automations', 'label', 'Labels')}</th>
+            <th>${renderSortButton('automations', 'room', 'Room')}</th>
+            <th>Actions</th>
+          </tr>
+        `;
+      }
 
       body.innerHTML = rows.map((item) => {
         const isQuarantine = item.status === 'quarantine';
@@ -1240,6 +1413,7 @@
         const room = item.room || '';
         const labelsArray = Array.isArray(item.labels) ? item.labels : [];
         const editId = item.editId || item.haUniqueId || '';
+        const deviceHints = renderEntityDeviceHints(entityDeviceMap.get(item.id) || []);
 
         return `
           <tr class="${rowClass}">
@@ -1248,12 +1422,13 @@
                 <strong>${escapeHtml(item.alias || item.id)}</strong><br>
                 <small>${escapeHtml(item.id)}</small>
               </button>
+              ${deviceHints}
             </td>
             <td data-label="Status">
               <span class="status ${statusClass}">${statusText}</span>
             </td>
             <td data-label="Category">
-              <input data-field="category" data-id="${escapeHtml(item.id)}" value="${escapeHtml(category)}" placeholder="e.g. climate" />
+              <input data-field="category" data-id="${escapeHtml(item.id)}" list="category-options" value="${escapeHtml(category)}" placeholder="e.g. climate" />
               <div class="meta-tools">
                 <button data-action="filter-category" data-filter-scope="automation" data-value="${escapeHtml(category)}" ${category ? '' : 'disabled'} title="Filter by this category.">Filter</button>
               </div>
@@ -1273,7 +1448,7 @@
               </div>
             </td>
             <td data-label="Room">
-              <input data-field="room" data-id="${escapeHtml(item.id)}" value="${escapeHtml(room)}" placeholder="e.g. kitchen" />
+              <input data-field="room" data-id="${escapeHtml(item.id)}" list="room-options" value="${escapeHtml(room)}" placeholder="e.g. kitchen" />
               <div class="meta-tools">
                 <button data-action="filter-room" data-filter-scope="automation" data-value="${escapeHtml(room)}" ${room ? '' : 'disabled'} title="Filter by this room.">Filter</button>
               </div>
@@ -1302,16 +1477,17 @@
 
       const filtered = state.scripts.filter((item) => filterEntity(item, state.scriptFilters));
       const rows = sortEntities(filtered, state.sorting.scripts);
+      const entityDeviceMap = buildEntityDeviceMap();
       const showLabels = rows.some((item) => Array.isArray(item.labels) && item.labels.length > 0);
       const showRoom = rows.some((item) => String(item.room || '').trim().length > 0);
 
       if (head) {
         head.innerHTML = `
           <tr>
-            <th>Script</th>
-            <th>Category</th>
-            ${showLabels ? '<th>Labels</th>' : ''}
-            ${showRoom ? '<th>Room</th>' : ''}
+            <th>${renderSortButton('scripts', 'name', 'Script')}</th>
+            <th>${renderSortButton('scripts', 'category', 'Category')}</th>
+            ${showLabels ? `<th>${renderSortButton('scripts', 'label', 'Labels')}</th>` : ''}
+            ${showRoom ? `<th>${renderSortButton('scripts', 'room', 'Room')}</th>` : ''}
             <th>Actions</th>
           </tr>
         `;
@@ -1324,6 +1500,7 @@
         const room = item.room || '';
         const labelsArray = Array.isArray(item.labels) ? item.labels : [];
         const editId = item.editId || item.haUniqueId || '';
+        const deviceHints = renderEntityDeviceHints(entityDeviceMap.get(item.id) || []);
 
         return `
           <tr class="${rowClass}">
@@ -1332,9 +1509,10 @@
                 <strong>${escapeHtml(item.alias || item.id)}</strong><br>
                 <small>${escapeHtml(item.id)}</small>
               </button>
+              ${deviceHints}
             </td>
             <td data-label="Category">
-              <input data-field="category" data-id="${escapeHtml(item.id)}" value="${escapeHtml(category)}" placeholder="e.g. utility" />
+              <input data-field="category" data-id="${escapeHtml(item.id)}" list="category-options" value="${escapeHtml(category)}" placeholder="e.g. utility" />
               <div class="meta-tools">
                 <button data-action="filter-category" data-filter-scope="script" data-value="${escapeHtml(category)}" ${category ? '' : 'disabled'} title="Filter by this category.">Filter</button>
               </div>
@@ -1357,7 +1535,7 @@
             ` : ''}
             ${showRoom ? `
               <td data-label="Room">
-                <input data-field="room" data-id="${escapeHtml(item.id)}" value="${escapeHtml(room)}" placeholder="e.g. office" />
+                <input data-field="room" data-id="${escapeHtml(item.id)}" list="room-options" value="${escapeHtml(room)}" placeholder="e.g. office" />
                 <div class="meta-tools">
                   <button data-action="filter-room" data-filter-scope="script" data-value="${escapeHtml(room)}" ${room ? '' : 'disabled'} title="Filter by this room.">Filter</button>
                 </div>
@@ -1664,12 +1842,36 @@
       }
       state.metaInFlight.add(key);
       try {
-        await saveMeta(id, entityType, { silent: true });
+        const result = await saveMeta(id, entityType, { silent: true });
+        if (!result?.skipped) {
+          showToast(`Metadata auto-saved for ${id}`);
+        }
       } catch (error) {
         showToast(error.message);
       } finally {
         state.metaInFlight.delete(key);
       }
+    }
+
+    function scheduleMetaSave(id, entityType = 'automation') {
+      const normalizedId = String(id || '').trim();
+      if (!normalizedId) {
+        return;
+      }
+
+      const normalizedEntityType = resolveEntityTypeFromId(normalizedId, entityType);
+      const key = `${normalizedEntityType}:${normalizedId}`;
+
+      if (state.metaSaveTimers.has(key)) {
+        window.clearTimeout(state.metaSaveTimers.get(key));
+      }
+
+      const timer = window.setTimeout(() => {
+        state.metaSaveTimers.delete(key);
+        autoSaveMeta(normalizedId, normalizedEntityType).catch((error) => showToast(error.message));
+      }, 3000);
+
+      state.metaSaveTimers.set(key, timer);
     }
 
     async function quarantine(id, entityType = 'automation') {
@@ -1787,8 +1989,13 @@
       const entityType = target.dataset.entityType || (String(id || '').startsWith('script.') ? 'script' : 'automation');
 
       const run = async () => {
+        if (action === 'sort') {
+          toggleSort(target.dataset.sortScope || 'automations', target.dataset.sortField || 'name');
+          return;
+        }
         if (action === 'open-edit') openEntityEditTab(entityType, editId, id);
         if (action === 'open-device') openDeviceTab(target.dataset.deviceId || '');
+        if (action === 'filter-device') openDevicesWithFilter(target.dataset.deviceQuery || '');
         if (action === 'open-raw') await openRawForAutomation(id);
         if (action === 'save-meta') await saveMeta(id, entityType);
         if (action === 'quarantine') await quarantine(id, entityType);
@@ -1801,7 +2008,7 @@
               .map((chip) => chip.dataset.labelValue || '')
               .filter((value) => value && value !== (target.dataset.value || ''));
             renderLabelsInEditor(editor, remaining);
-            await autoSaveMeta(id, entityType);
+            scheduleMetaSave(id, entityType);
           }
         }
         if (action === 'filter-category') applyFilter(target.dataset.filterScope || entityType, 'category', target.dataset.value || '');
@@ -1851,16 +2058,6 @@
         input.addEventListener('change', onChange);
       });
 
-      const automationSort = byId('f-sort');
-      automationSort.addEventListener('input', (event) => {
-        state.sorting.automations = event.target.value || 'name';
-        renderAutomations();
-      });
-      automationSort.addEventListener('change', (event) => {
-        state.sorting.automations = event.target.value || 'name';
-        renderAutomations();
-      });
-
       ['name', 'category', 'label', 'room'].forEach((key) => {
         const input = byId(`sf-${key}`);
         if (!input) return;
@@ -1870,16 +2067,6 @@
         };
         input.addEventListener('input', onChange);
         input.addEventListener('change', onChange);
-      });
-
-      const scriptSort = byId('sf-sort');
-      scriptSort.addEventListener('input', (event) => {
-        state.sorting.scripts = event.target.value || 'name';
-        renderScripts();
-      });
-      scriptSort.addEventListener('change', (event) => {
-        state.sorting.scripts = event.target.value || 'name';
-        renderScripts();
       });
     }
 
@@ -1911,7 +2098,7 @@
           const input = event.target.closest('input[data-field="category"], input[data-field="room"]');
           if (!input) return;
           const id = String(input.dataset.id || '').trim();
-          autoSaveMeta(id, entityType).catch((error) => showToast(error.message));
+          scheduleMetaSave(id, entityType);
         });
       };
 
@@ -1931,7 +2118,7 @@
           if (event.key === 'Enter' || event.key === ',') {
             event.preventDefault();
             commitLabelInput(input);
-            autoSaveMeta(String(input.dataset.id || '').trim(), resolveEntityTypeFromId(input.dataset.id || '')).catch((error) => showToast(error.message));
+            scheduleMetaSave(String(input.dataset.id || '').trim(), resolveEntityTypeFromId(input.dataset.id || ''));
             return;
           }
 
@@ -1950,7 +2137,7 @@
           const input = event.target.closest('input[data-label-input]');
           if (!input) return;
           commitLabelInput(input);
-          autoSaveMeta(String(input.dataset.id || '').trim(), resolveEntityTypeFromId(input.dataset.id || '')).catch((error) => showToast(error.message));
+          scheduleMetaSave(String(input.dataset.id || '').trim(), resolveEntityTypeFromId(input.dataset.id || ''));
         });
       };
 
@@ -1971,6 +2158,8 @@
 
     byId('automations-body').addEventListener('click', onTableAction);
     byId('scripts-body').addEventListener('click', onTableAction);
+    byId('automations-head').addEventListener('click', onTableAction);
+    byId('scripts-head').addEventListener('click', onTableAction);
     byId('devices-list').addEventListener('click', onTableAction);
     byId('quarantine-body').addEventListener('click', onTableAction);
     byId('raw-history').addEventListener('click', onTableAction);
