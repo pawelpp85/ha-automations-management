@@ -277,6 +277,28 @@
       gap: 0.45rem;
     }
 
+    .device-automation {
+      display: inline-flex;
+      align-items: stretch;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .device-automation button {
+      border: 0;
+      border-radius: 0;
+      margin: 0;
+    }
+
+    .device-automation .history {
+      border-left: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(147, 224, 163, 0.2), rgba(147, 224, 163, 0.08));
+      color: color-mix(in srgb, var(--accent-2) 72%, var(--text));
+      font-weight: 600;
+    }
+
     .chip {
       display: inline-flex;
       align-items: center;
@@ -785,10 +807,12 @@
           </div>
           <div class="device-links">
             ${device.automationIds.map((a) => `
-              <button data-action="open-edit" data-id="${escapeHtml(a.id)}" data-edit-id="${escapeHtml(a.editId || '')}" title="Open automation edit in new tab.">
-                ${escapeHtml(a.alias || a.id)} (${escapeHtml(a.status === 'quarantine' ? 'quarantine' : (a.haEnabled === false ? 'disabled' : 'active'))})
-              </button>
-              <button data-action="open-raw" data-id="${escapeHtml(a.id)}" title="Open raw YAML editor.">Raw</button>
+              <span class="device-automation">
+                <button data-action="open-edit" data-id="${escapeHtml(a.id)}" data-edit-id="${escapeHtml(a.editId || '')}" title="Open automation edit in new tab.">
+                  ${escapeHtml(a.alias || a.id)} (${escapeHtml(a.status === 'quarantine' ? 'quarantine' : (a.haEnabled === false ? 'disabled' : 'active'))})
+                </button>
+                <button class="history" data-action="open-raw" data-id="${escapeHtml(a.id)}" title="Open raw configuration history.">History</button>
+              </span>
             `).join('')}
           </div>
         </div>

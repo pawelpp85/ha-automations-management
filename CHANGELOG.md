@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0b14 - 2026-02-18
+
+- Added Home Assistant category registry mapping (`category_id -> category name`) during import.
+- Fixed category display where raw IDs like `01K...` were shown instead of names like `alarm`.
+- Improved Devices view action layout: per-automation split action with main edit button and highlighted `History` action.
+- Renamed device-level `Raw` action to `History`.
+- Bumped add-on metadata version to `1.0.0b14`.
+
 ## 1.0.0b13 - 2026-02-18
 
 - Added `Devices` filter by device name/ID in UI.

@@ -4,6 +4,7 @@ const yaml = require('js-yaml');
 const WebSocket = require('ws');
 
 const HA_WS_TIMEOUT_MS = 12000;
+const CATEGORY_SCOPES = ['automation', 'entity'];
 
 class HaHttpError extends Error {
   constructor(status, requestPath, bodyText) {
@@ -54,7 +55,9 @@ class HaClient {
     this.entityIdByAutomationId = new Map();
     this.entityIdsByDeviceId = new Map();
     this.deviceNameByDeviceId = new Map();
+    this.categoryNameByScope = new Map();
     this.deviceRegistryLoadedAt = 0;
+    this.categoryRegistryLoadedAt = 0;
     this.yamlPath = process.env.HA_AUTOMATIONS_YAML_PATH || '/config/automations.yaml';
   }
 
@@ -70,6 +73,43 @@ class HaClient {
     }
 
     this.entityIdsByDeviceId.get(normalizedDeviceId).add(normalizedEntityId);
+  }
+
+  updateCategoryScope(scope, entries) {
+    const normalizedScope = String(scope || '').trim();
+    if (!normalizedScope) {
+      return;
+    }
+
+    const map = new Map();
+    for (const entry of entries || []) {
+      const categoryId = String(entry?.category_id || entry?.id || '').trim();
+      if (!categoryId) {
+        continue;
+      }
+      const categoryName = String(entry?.name || '').trim();
+      map.set(categoryId, categoryName || categoryId);
+    }
+
+    if (map.size > 0) {
+      this.categoryNameByScope.set(normalizedScope, map);
+    }
+  }
+
+  resolveCategoryValue(value, scopes = CATEGORY_SCOPES) {
+    const category = String(value || '').trim();
+    if (!category) {
+      return '';
+    }
+
+    for (const scope of scopes) {
+      const registry = this.categoryNameByScope.get(scope);
+      if (registry?.has(category)) {
+        return registry.get(category) || category;
+      }
+    }
+
+    return category;
   }
 
   buildHaWsUrl() {
@@ -239,6 +279,7 @@ class HaClient {
       let areas = [];
       let labels = [];
       let devices = [];
+      const categoriesByScope = {};
       try {
         areas = await client.request('config/area_registry/list');
       } catch (_error) {
@@ -254,6 +295,13 @@ class HaClient {
       } catch (_error) {
         devices = [];
       }
+      for (const scope of CATEGORY_SCOPES) {
+        try {
+          categoriesByScope[scope] = await client.request('config/category_registry/list', { scope });
+        } catch (_error) {
+          categoriesByScope[scope] = [];
+        }
+      }
 
       const areaNameById = new Map(
         (areas || []).map((area) => [String(area.area_id || area.id || ''), String(area.name || '')])
@@ -261,6 +309,10 @@ class HaClient {
       const labelNameById = new Map(
         (labels || []).map((label) => [String(label.label_id || label.id || ''), String(label.name || '')])
       );
+      for (const scope of CATEGORY_SCOPES) {
+        this.updateCategoryScope(scope, categoriesByScope[scope] || []);
+      }
+      this.categoryRegistryLoadedAt = Date.now();
       this.entityIdsByDeviceId.clear();
       this.deviceNameByDeviceId.clear();
       for (const entry of entities || []) {
@@ -318,13 +370,14 @@ class HaClient {
         const labelNames = rawLabels.map((labelId) => labelNameById.get(labelId) || labelId).filter(Boolean);
         const stateValue = String(stateByEntityId.get(entry.entity_id) || '').toLowerCase();
         const haEnabled = stateValue ? stateValue !== 'off' : true;
-        const category = String(
+        const rawCategory = String(
           entry.category
             || entry.category_id
             || entry.categories?.automation
             || entry.categories?.entity
             || ''
         );
+        const category = this.resolveCategoryValue(rawCategory, CATEGORY_SCOPES);
 
         if (config) {
           this.cachedConfigs.set(automationId, config);
@@ -364,6 +417,7 @@ class HaClient {
 
   async listFromStatesAndYaml() {
     const states = await this.request('/api/states');
+    await this.ensureCategoryRegistryCache();
     const automations = states.filter((entry) => String(entry.entity_id || '').startsWith('automation.'));
     const yamlAutomations = this.readYamlAutomations();
     const usedIndexes = new Set();
@@ -415,7 +469,10 @@ class HaClient {
         labels: Array.isArray(entry.attributes?.labels) ? entry.attributes.labels : [],
         label_ids: Array.isArray(entry.attributes?.label_ids) ? entry.attributes.label_ids : [],
         label_names: [],
-        category: String(entry.attributes?.category || entry.attributes?.category_id || ''),
+        category: this.resolveCategoryValue(
+          String(entry.attributes?.category || entry.attributes?.category_id || ''),
+          CATEGORY_SCOPES
+        ),
         ha_enabled: String(entry.state || '').toLowerCase() !== 'off',
         raw_config: rawConfig,
       };
@@ -468,6 +525,28 @@ class HaClient {
     }
   }
 
+  async ensureCategoryRegistryCache() {
+    const recentlyLoaded = this.categoryRegistryLoadedAt && (Date.now() - this.categoryRegistryLoadedAt) < 120000;
+    if (recentlyLoaded && this.categoryNameByScope.size > 0) {
+      return;
+    }
+
+    try {
+      const client = await this.createWsClient();
+      try {
+        for (const scope of CATEGORY_SCOPES) {
+          const categories = await client.request('config/category_registry/list', { scope }).catch(() => []);
+          this.updateCategoryScope(scope, categories);
+        }
+        this.categoryRegistryLoadedAt = Date.now();
+      } finally {
+        client.close();
+      }
+    } catch (_error) {
+      // Best-effort cache for category_id -> category name.
+    }
+  }
+
   async listAutomations() {
     if (this.wsAutomationApiSupported) {
       try {
@@ -487,6 +566,7 @@ class HaClient {
 
     if (this.globalAutomationConfigApiSupported) {
       try {
+        await this.ensureCategoryRegistryCache();
         const data = await this.request('/api/config/automation/config');
         const list = Array.isArray(data) ? data : [];
         const normalized = [];
@@ -526,7 +606,7 @@ class HaClient {
               labels: Array.isArray(entry.labels) ? entry.labels : (Array.isArray(entry.label_ids) ? entry.label_ids : []),
               label_ids: Array.isArray(entry.label_ids) ? entry.label_ids : [],
               label_names: Array.isArray(entry.label_names) ? entry.label_names : [],
-              category: String(entry.category || entry.category_id || ''),
+              category: this.resolveCategoryValue(String(entry.category || entry.category_id || ''), CATEGORY_SCOPES),
               ha_enabled: haEnabled,
               raw_config: rawConfig,
             });
