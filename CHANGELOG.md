@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.0.0b15 - 2026-02-18
+
+- UI updates:
+  - Changed `Open edit` to `Edit`.
+  - Renamed `Raw` actions to `History` in Automations/Devices/Quarantine.
+  - Kept only `Import` action in top toolbar (removed `Sync` button).
+  - Grouped `Commit` and `Push` into `YAML repository` section.
+  - Restyled navigation to true tab-like appearance (`Automations`, `Devices`, `Quarantine`, `History`).
+  - Added label chip editor in Automations metadata (labels are no longer plain comma-only text input).
+  - Switched theme accents/background from green tint to dark burgundy palette.
+- Metadata flow:
+  - `Save meta` now tries to synchronize category/labels/room to Home Assistant immediately (with warning when HA mapping fails).
+  - Persisted metadata changes to local YAML backup snapshot.
+- Git UX:
+  - Added repository status endpoint and commit availability state.
+  - `Commit` button is disabled when there are no backup changes.
+- Toast UX:
+  - Popup messages now stay visible at least 15 seconds.
+  - Popup will not disappear while mouse cursor is over it.
+- Added documentation note how to generate `remote_ssh_key_base64` from private key.
+- Bumped add-on metadata version to `1.0.0b15`.
+
 ## 1.0.0b14 - 2026-02-18
 
 - Added Home Assistant category registry mapping (`category_id -> category name`) during import.

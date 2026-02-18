@@ -16,6 +16,7 @@ class FakeHaClient {
     this.items = items;
     this.deleted = [];
     this.upserted = [];
+    this.metadataUpdates = [];
   }
 
   async listAutomations() {
@@ -58,6 +59,11 @@ class FakeHaClient {
       },
     ];
   }
+
+  async updateAutomationMetadata(entityId, payload) {
+    this.metadataUpdates.push({ entityId, payload });
+    return { applied: true };
+  }
 }
 
 class FakeGitBackup {
@@ -73,6 +79,10 @@ class FakeGitBackup {
   yamlPath(status, automationId) {
     const safe = automationId.replace(/[^a-zA-Z0-9_.-]/g, '_');
     return path.join(status === 'quarantine' ? this.quarantineDir : this.activeDir, `${safe}.yaml`);
+  }
+
+  fileExists(status, automationId) {
+    return fs.existsSync(this.yamlPath(status, automationId));
   }
 
   writeYaml(status, automationId, config) {
@@ -117,6 +127,10 @@ class FakeGitBackup {
 
   push() {
     return { pushed: true };
+  }
+
+  hasChanges() {
+    return false;
   }
 }
 
@@ -299,4 +313,39 @@ test('validateRawYaml reports syntax errors and structural warnings', () => {
   });
   assert.equal(result.valid, true);
   assert.equal(result.warnings.length, 1);
+});
+
+test('updateMetadata applies metadata to HA by default and stores it locally', async () => {
+  const storeDir = tempDir('ha-am-store-');
+  const repoDir = tempDir('ha-am-git-');
+  const store = new StoreService(storeDir);
+  const haClient = new FakeHaClient([
+    {
+      id: 'automation.meta_test',
+      entity_id: 'automation.meta_test',
+      alias: 'Meta test',
+      raw_config: {
+        alias: 'Meta test',
+        trigger: [],
+        condition: [],
+        action: [],
+      },
+    },
+  ]);
+  const gitBackup = new FakeGitBackup(repoDir);
+  const service = new AutomationService({ store, haClient, gitBackup });
+  await service.importFromHa({ automaticCommit: false });
+
+  const updated = await service.updateMetadata('automation.meta_test', {
+    category: 'alarm',
+    labels: ['critical', 'night'],
+    room: 'hall',
+  });
+
+  assert.equal(updated.category, 'alarm');
+  assert.deepEqual(updated.labels, ['critical', 'night']);
+  assert.equal(updated.room, 'hall');
+  assert.equal(updated.haApplied, true);
+  assert.equal(haClient.metadataUpdates.length, 1);
+  assert.equal(haClient.metadataUpdates[0].entityId, 'automation.meta_test');
 });

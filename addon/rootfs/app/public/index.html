@@ -6,38 +6,38 @@
   <title>HA Automations Management</title>
   <style>
     :root {
-      --bg: #0d1116;
-      --bg-soft: #151b24;
-      --panel: #1c2430;
-      --line: #2e3a4b;
-      --text: #dce6f2;
-      --muted: #95a7bb;
+      --bg: #190d12;
+      --bg-soft: #241219;
+      --panel: #2d1720;
+      --line: #4c2834;
+      --text: #f3e8ee;
+      --muted: #c0a7b1;
       --ok: #2ea97c;
       --warn: #d9a441;
       --danger: #d86a73;
-      --accent: #45b3df;
-      --accent-2: #93e0a3;
-      --quarantine: #6f7c8c;
-      --disabled: #566071;
+      --accent: #cf6f8d;
+      --accent-2: #8d2944;
+      --quarantine: #a28894;
+      --disabled: #7b6670;
       --shadow: 0 14px 36px rgba(0, 0, 0, 0.32);
     }
 
     @media (prefers-color-scheme: light) {
       :root {
-        --bg: #edf2f8;
-        --bg-soft: #f5f8fc;
+        --bg: #f8edf1;
+        --bg-soft: #fff7f9;
         --panel: #ffffff;
-        --line: #d6dfeb;
-        --text: #1a2733;
-        --muted: #556577;
+        --line: #e6ced6;
+        --text: #321d25;
+        --muted: #725560;
         --ok: #1f8f66;
         --warn: #9f6f12;
         --danger: #b0424b;
-        --accent: #1f7ca4;
-        --accent-2: #2a8b40;
-        --quarantine: #8a97a6;
-        --disabled: #a3adba;
-        --shadow: 0 8px 22px rgba(26, 39, 51, 0.12);
+        --accent: #8f2f4f;
+        --accent-2: #6f1e39;
+        --quarantine: #9c808b;
+        --disabled: #b999a6;
+        --shadow: 0 8px 22px rgba(50, 29, 37, 0.14);
       }
     }
 
@@ -50,8 +50,8 @@
       min-height: 100vh;
       color: var(--text);
       background:
-        radial-gradient(circle at 16% 0%, rgba(69, 179, 223, 0.12), transparent 42%),
-        radial-gradient(circle at 100% 0%, rgba(147, 224, 163, 0.12), transparent 33%),
+        radial-gradient(circle at 16% 0%, rgba(207, 111, 141, 0.15), transparent 42%),
+        radial-gradient(circle at 100% 0%, rgba(141, 41, 68, 0.18), transparent 36%),
         var(--bg);
       font-family: "Atkinson Hyperlegible", "Segoe UI", sans-serif;
     }
@@ -123,11 +123,44 @@
       display: flex;
       gap: 0.5rem;
       flex-wrap: wrap;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 0.2rem;
+    }
+
+    .tabs button {
+      border: 0;
+      border-bottom: 3px solid transparent;
+      border-radius: 8px 8px 0 0;
+      background: transparent;
+      padding: 0.5rem 0.7rem;
     }
 
     .tabs button.active {
-      border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
-      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+      border-bottom-color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 18%, transparent);
+      box-shadow: none;
+    }
+
+    .repo-panel {
+      margin-top: 0.8rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 0.7rem 0.8rem;
+      background: color-mix(in srgb, var(--panel) 85%, var(--bg-soft));
+    }
+
+    .repo-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.6rem;
+      margin-bottom: 0.55rem;
+    }
+
+    .repo-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
     }
 
     .warning-banner {
@@ -294,9 +327,51 @@
 
     .device-automation .history {
       border-left: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(147, 224, 163, 0.2), rgba(147, 224, 163, 0.08));
+      background: linear-gradient(180deg, rgba(207, 111, 141, 0.22), rgba(141, 41, 68, 0.14));
       color: color-mix(in srgb, var(--accent-2) 72%, var(--text));
       font-weight: 600;
+    }
+
+    .labels-editor {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--bg-soft);
+      padding: 0.32rem 0.45rem;
+      min-height: 38px;
+    }
+
+    .labels-editor input[data-label-input] {
+      border: 0;
+      outline: none;
+      background: transparent;
+      padding: 0.2rem;
+      min-width: 120px;
+      width: auto;
+      flex: 1 1 140px;
+    }
+
+    .label-chip-edit {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      border-radius: 999px;
+      border: 1px solid color-mix(in srgb, var(--line) 70%, var(--accent));
+      background: color-mix(in srgb, var(--accent) 14%, transparent);
+      padding: 0.12rem 0.45rem;
+      font-size: 0.82rem;
+    }
+
+    .label-chip-edit button {
+      border: 0;
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      line-height: 1;
+      cursor: pointer;
     }
 
     .chip {
@@ -387,16 +462,23 @@
       <h1>HA Automations Management</h1>
       <p>Organize automations, map devices, and manage quarantine backups.</p>
       <div class="toolbar">
-        <button id="btn-import" class="primary" title="Import new automations and auto-commit changes.">Import now</button>
-        <button id="btn-sync" class="primary" title="Run full sync and detect removed automations.">Sync now</button>
-        <button id="btn-commit" title="Create manual commit in backup repository.">Commit backup</button>
-        <button id="btn-push" title="Push committed backup changes to configured remote repository.">Push remote</button>
+        <button id="btn-import" class="primary" title="Import new automations and auto-commit changes.">Import</button>
+      </div>
+      <div class="repo-panel">
+        <div class="repo-head">
+          <strong>YAML repository</strong>
+          <span class="hint" id="repo-status">Checking repository status...</span>
+        </div>
+        <div class="repo-actions">
+          <button id="btn-commit" title="Create manual commit in backup repository.">Commit</button>
+          <button id="btn-push" title="Push committed backup changes to configured remote repository.">Push</button>
+        </div>
       </div>
       <div class="tabs">
-        <button data-tab="automations" class="active">Automations</button>
-        <button data-tab="devices">Devices</button>
-        <button data-tab="quarantine">Quarantine</button>
-        <button data-tab="raw">Raw configuration</button>
+        <button data-tab="automations" class="active" role="tab" aria-selected="true">Automations</button>
+        <button data-tab="devices" role="tab" aria-selected="false">Devices</button>
+        <button data-tab="quarantine" role="tab" aria-selected="false">Quarantine</button>
+        <button data-tab="raw" role="tab" aria-selected="false">History</button>
       </div>
       <div id="warning-banner" class="warning-banner"></div>
     </section>
@@ -469,7 +551,7 @@
 
     <section id="view-raw" class="view">
       <div class="view-head">
-        <strong>Raw Configuration</strong>
+        <strong>History</strong>
         <span class="hint">Edit YAML backup and browse Git history snapshots.</span>
       </div>
       <div style="padding: 0.9rem;">
@@ -506,6 +588,7 @@
       devices: [],
       warnings: [],
       inFlight: new Set(),
+      gitHasChanges: false,
       filters: { name: '', category: '', label: '', room: '', status: '', device: '' },
       raw: {
         selectedId: '',
@@ -530,19 +613,31 @@
 
     function showToast(message, timeout = 3600) {
       const toast = byId('toast');
+      const minDuration = 15000;
+      const duration = Math.max(minDuration, Number(timeout || 0));
+
+      window.clearTimeout(showToast.timer);
       toast.textContent = message;
       toast.classList.add('visible');
-      window.clearTimeout(showToast.timer);
-      showToast.timer = window.setTimeout(() => toast.classList.remove('visible'), timeout);
+      toast.dataset.remaining = String(duration);
+      toast.dataset.lastStartAt = String(Date.now());
+      toast.dataset.hover = 'false';
+
+      showToast.timer = window.setTimeout(() => {
+        if (toast.dataset.hover === 'true') {
+          return;
+        }
+        toast.classList.remove('visible');
+      }, duration);
     }
 
     function setBusy(key, busy) {
       if (busy) state.inFlight.add(key);
       else state.inFlight.delete(key);
       const isBusy = state.inFlight.size > 0;
-      ['btn-import', 'btn-sync', 'btn-commit', 'btn-push'].forEach((id) => {
-        byId(id).disabled = isBusy;
-      });
+      byId('btn-import').disabled = isBusy;
+      byId('btn-push').disabled = isBusy;
+      byId('btn-commit').disabled = isBusy || !state.gitHasChanges;
     }
 
     function resolveApiUrl(url) {
@@ -579,6 +674,70 @@
 
     function parseLabels(text) {
       return String(text || '').split(',').map((v) => v.trim()).filter(Boolean);
+    }
+
+    function normalizeLabelArray(values) {
+      const unique = new Set();
+      (values || []).forEach((value) => {
+        const normalized = String(value || '').trim();
+        if (normalized) {
+          unique.add(normalized);
+        }
+      });
+      return [...unique];
+    }
+
+    function readLabelsFromEditor(id) {
+      const editor = [...document.querySelectorAll('.labels-editor')].find((node) => node.dataset.id === id);
+      if (!editor) {
+        return [];
+      }
+
+      const chips = [...editor.querySelectorAll('.label-chip-edit')].map(
+        (chip) => chip.dataset.labelValue || chip.textContent || ''
+      );
+      const input = editor.querySelector('input[data-label-input]');
+      const typed = input ? parseLabels(input.value) : [];
+      return normalizeLabelArray([...chips, ...typed]);
+    }
+
+    function renderLabelsInEditor(editor, labels) {
+      const input = editor.querySelector('input[data-label-input]');
+      if (!input) {
+        return;
+      }
+
+      editor.querySelectorAll('.label-chip-edit').forEach((chip) => chip.remove());
+      const normalized = normalizeLabelArray(labels);
+      normalized.forEach((label) => {
+        const chip = document.createElement('span');
+        chip.className = 'label-chip-edit';
+        chip.dataset.labelValue = label;
+        chip.innerHTML = `
+          ${escapeHtml(label)}
+          <button type="button" data-action="remove-label" data-id="${escapeHtml(editor.dataset.id || '')}" data-value="${escapeHtml(label)}" title="Remove label">x</button>
+        `;
+        editor.insertBefore(chip, input);
+      });
+      input.value = '';
+    }
+
+    function commitLabelInput(input) {
+      const editor = input.closest('.labels-editor');
+      if (!editor) {
+        return;
+      }
+
+      const typed = parseLabels(input.value);
+      if (!typed.length) {
+        input.value = '';
+        return;
+      }
+
+      const current = [...editor.querySelectorAll('.label-chip-edit')].map(
+        (chip) => chip.dataset.labelValue || chip.textContent || ''
+      );
+      renderLabelsInEditor(editor, [...current, ...typed]);
     }
 
     function setDatalist(id, values) {
@@ -638,6 +797,7 @@
     function selectTab(tab) {
       document.querySelectorAll('.tabs button').forEach((button) => {
         button.classList.toggle('active', button.dataset.tab === tab);
+        button.setAttribute('aria-selected', button.dataset.tab === tab ? 'true' : 'false');
       });
       document.querySelectorAll('.view').forEach((view) => view.classList.remove('visible'));
       const selected = byId(`view-${tab}`);
@@ -645,15 +805,21 @@
     }
 
     async function refresh() {
-      const [automations, devices, warnings] = await Promise.all([
+      const [automations, devices, warnings, gitStatus] = await Promise.all([
         api('/api/automations'),
         api('/api/devices'),
         api('/api/warnings'),
+        api('/api/git/status').catch(() => ({ data: { hasChanges: false } })),
       ]);
 
       state.automations = automations.data || [];
       state.devices = devices.data || [];
       state.warnings = warnings.data || [];
+      state.gitHasChanges = Boolean(gitStatus?.data?.hasChanges);
+      byId('repo-status').textContent = state.gitHasChanges
+        ? 'Pending changes detected'
+        : 'No backup changes to commit';
+      byId('btn-commit').disabled = state.inFlight.size > 0 || !state.gitHasChanges;
 
       renderFilterSuggestions();
       renderWarnings();
@@ -750,7 +916,15 @@
               </div>
             </td>
             <td data-label="Labels">
-              <input data-field="labels" data-id="${escapeHtml(item.id)}" value="${escapeHtml(labelsText)}" placeholder="comma,separated" />
+              <div class="labels-editor" data-label-editor data-id="${escapeHtml(item.id)}">
+                ${labelsArray.map((label) => `
+                  <span class="label-chip-edit" data-label-value="${escapeHtml(label)}">
+                    ${escapeHtml(label)}
+                    <button type="button" data-action="remove-label" data-id="${escapeHtml(item.id)}" data-value="${escapeHtml(label)}" title="Remove label">x</button>
+                  </span>
+                `).join('')}
+                <input data-label-input data-id="${escapeHtml(item.id)}" placeholder="type label + Enter" />
+              </div>
               <div class="meta-tools">
                 ${labelsArray.map((label) => `<button data-action="filter-label" data-value="${escapeHtml(label)}" title="Filter by this label.">Filter: ${escapeHtml(label)}</button>`).join('')}
               </div>
@@ -764,8 +938,8 @@
             <td data-label="Actions">
               <div class="actions">
                 <button class="primary" data-action="save-meta" data-id="${escapeHtml(item.id)}" title="Save category, labels, and room metadata.">Save meta</button>
-                <button data-action="open-edit" data-id="${escapeHtml(item.id)}" data-edit-id="${escapeHtml(editId)}" title="Open Home Assistant automation edit page in a new tab.">Open edit</button>
-                <button data-action="open-raw" data-id="${escapeHtml(item.id)}" title="Open raw YAML editor for this automation.">Raw</button>
+                <button data-action="open-edit" data-id="${escapeHtml(item.id)}" data-edit-id="${escapeHtml(editId)}" title="Open Home Assistant automation edit page in a new tab.">Edit</button>
+                <button data-action="open-raw" data-id="${escapeHtml(item.id)}" title="Open YAML history for this automation.">History</button>
                 <button class="warn" data-action="quarantine" data-id="${escapeHtml(item.id)}" ${isQuarantine ? 'disabled' : ''} title="Move automation to quarantine and remove it from HA after confirmation.">Quarantine</button>
               </div>
             </td>
@@ -777,7 +951,7 @@
     function renderDevices() {
       const list = byId('devices-list');
       if (!state.devices.length) {
-        list.innerHTML = '<div class="device-card">No devices indexed yet. Run import/sync.</div>';
+        list.innerHTML = '<div class="device-card">No devices indexed yet. Run import.</div>';
         return;
       }
 
@@ -834,7 +1008,7 @@
           <td data-label="Room">${escapeHtml(item.room || '')}</td>
           <td data-label="Actions">
             <div class="actions">
-              <button data-action="open-raw" data-id="${escapeHtml(item.id)}" title="Open raw YAML editor.">Raw</button>
+              <button data-action="open-raw" data-id="${escapeHtml(item.id)}" title="Open YAML history for this automation.">History</button>
               <button class="primary" data-action="restore" data-id="${escapeHtml(item.id)}" title="Restore automation from quarantine backup into HA.">Restore</button>
               <button class="danger" data-action="delete-quarantine" data-id="${escapeHtml(item.id)}" title="Permanently delete quarantine backup entry after confirmation.">Permanent delete</button>
             </div>
@@ -999,15 +1173,21 @@
 
     async function saveMeta(id) {
       const category = document.querySelector(`input[data-id="${id}"][data-field="category"]`)?.value || '';
-      const labels = document.querySelector(`input[data-id="${id}"][data-field="labels"]`)?.value || '';
+      const labels = readLabelsFromEditor(id);
       const room = document.querySelector(`input[data-id="${id}"][data-field="room"]`)?.value || '';
 
-      await api(`/api/automations/${encodeURIComponent(id)}/meta`, {
+      const result = await api(`/api/automations/${encodeURIComponent(id)}/meta`, {
         method: 'POST',
-        body: JSON.stringify({ category, labels: parseLabels(labels), room }),
+        body: JSON.stringify({ category, labels, room, applyToHa: true }),
       });
 
-      showToast(`Metadata updated for ${id}`);
+      if (result.data?.haError) {
+        showToast(`Saved locally. HA sync warning: ${result.data.haError}`);
+      } else if (result.data?.haApplied) {
+        showToast(`Metadata updated for ${id} and synced to HA`);
+      } else {
+        showToast(`Metadata updated for ${id}`);
+      }
       await refresh();
     }
 
@@ -1054,22 +1234,12 @@
       }
     }
 
-    async function runSync() {
-      setBusy('sync', true);
-      try {
-        const result = await api('/api/sync', { method: 'POST' });
-        showToast(
-          `Sync: changed=${result.importedCount || 0}, discovered=${result.total || 0}, failed=${result.failedCount || 0}`
-        );
-        await refresh();
-      } catch (error) {
-        showToast(error.message);
-      } finally {
-        setBusy('sync', false);
-      }
-    }
-
     async function runCommit() {
+      if (!state.gitHasChanges) {
+        showToast('No backup changes to commit');
+        return;
+      }
+
       const message = window.prompt('Commit message', 'chore(ui): manual backup commit') || '';
       if (!message.trim()) return;
 
@@ -1082,6 +1252,7 @@
 
         if (result.created) showToast('Backup commit created');
         else showToast('No backup changes to commit');
+        await refresh();
       } catch (error) {
         showToast(error.message);
       } finally {
@@ -1094,6 +1265,7 @@
       try {
         const result = await api('/api/git/push', { method: 'POST' });
         showToast(`Pushed to remote branch ${result.branch}`);
+        await refresh();
       } catch (error) {
         showToast(error.message);
       } finally {
@@ -1124,6 +1296,15 @@
         if (action === 'quarantine') await quarantine(id);
         if (action === 'restore') await restore(id);
         if (action === 'delete-quarantine') await deleteQuarantine(id);
+        if (action === 'remove-label') {
+          const editor = target.closest('.labels-editor');
+          if (editor) {
+            const remaining = [...editor.querySelectorAll('.label-chip-edit')]
+              .map((chip) => chip.dataset.labelValue || '')
+              .filter((value) => value && value !== (target.dataset.value || ''));
+            renderLabelsInEditor(editor, remaining);
+          }
+        }
         if (action === 'filter-category') applyFilter('category', target.dataset.value || '');
         if (action === 'filter-label') applyFilter('label', target.dataset.value || '');
         if (action === 'filter-room') applyFilter('room', target.dataset.value || '');
@@ -1191,8 +1372,36 @@
       });
     }
 
+    function setupLabelEditors() {
+      byId('automations-body').addEventListener('keydown', (event) => {
+        const input = event.target.closest('input[data-label-input]');
+        if (!input) return;
+
+        if (event.key === 'Enter' || event.key === ',') {
+          event.preventDefault();
+          commitLabelInput(input);
+          return;
+        }
+
+        if (event.key === 'Backspace' && !input.value) {
+          const editor = input.closest('.labels-editor');
+          if (!editor) return;
+          const chips = [...editor.querySelectorAll('.label-chip-edit')];
+          const last = chips[chips.length - 1];
+          if (last) {
+            last.remove();
+          }
+        }
+      });
+
+      byId('automations-body').addEventListener('focusout', (event) => {
+        const input = event.target.closest('input[data-label-input]');
+        if (!input) return;
+        commitLabelInput(input);
+      });
+    }
+
     byId('btn-import').addEventListener('click', runImport);
-    byId('btn-sync').addEventListener('click', runSync);
     byId('btn-commit').addEventListener('click', runCommit);
     byId('btn-push').addEventListener('click', runPush);
 
@@ -1201,10 +1410,46 @@
     byId('quarantine-body').addEventListener('click', onTableAction);
     byId('raw-history').addEventListener('click', onTableAction);
     byId('warning-banner').addEventListener('click', onWarningAction);
+    byId('toast').addEventListener('mouseenter', () => {
+      const toast = byId('toast');
+      if (!toast.classList.contains('visible')) {
+        return;
+      }
+
+      toast.dataset.hover = 'true';
+      const started = Number(toast.dataset.lastStartAt || Date.now());
+      const remaining = Number(toast.dataset.remaining || 15000);
+      const elapsed = Math.max(0, Date.now() - started);
+      toast.dataset.remaining = String(Math.max(0, remaining - elapsed));
+      window.clearTimeout(showToast.timer);
+    });
+    byId('toast').addEventListener('mouseleave', () => {
+      const toast = byId('toast');
+      if (!toast.classList.contains('visible')) {
+        return;
+      }
+
+      toast.dataset.hover = 'false';
+      const remaining = Number(toast.dataset.remaining || 0);
+      if (remaining <= 0) {
+        toast.classList.remove('visible');
+        return;
+      }
+
+      toast.dataset.lastStartAt = String(Date.now());
+      window.clearTimeout(showToast.timer);
+      showToast.timer = window.setTimeout(() => {
+        if (toast.dataset.hover === 'true') {
+          return;
+        }
+        toast.classList.remove('visible');
+      }, remaining);
+    });
 
     setupTabs();
     setupFilters();
     setupRawEditor();
+    setupLabelEditors();
 
     refresh().catch((error) => showToast(error.message));
   </script>

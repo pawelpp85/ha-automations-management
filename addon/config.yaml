@@ -1,5 +1,5 @@
 name: "HA Automations Management"
-version: "1.0.0b14"
+version: "1.0.0b15"
 slug: "ha_automations_management"
 description: "Organize, quarantine, and back up Home Assistant automations with local Git history"
 url: "https://github.com/pawelpp85/ha-automations-management"
@@ -36,7 +36,8 @@ options:
   remote_auth_mode: "ssh"
   # SSH private key material used for remote push (optional).
   remote_ssh_key: ""
-  # SSH private key material encoded as base64 (optional, useful for single-line input fields).
+  # SSH private key encoded as base64 (optional, useful for single-line input fields).
+  # Example: base64 < ~/.ssh/id_ed25519 | tr -d '\n'
   remote_ssh_key_base64: ""
   # HTTPS username (optional, used with token).
   remote_https_username: ""

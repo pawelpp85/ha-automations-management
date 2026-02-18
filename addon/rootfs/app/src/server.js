@@ -22,14 +22,14 @@ app.use(express.static(path.join(__dirname, '../public')));
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
-    version: '1.0.0b14',
+    version: '1.0.0b15',
     startedAt: process.uptime(),
   });
 });
 
 app.get('/api/config', (_req, res) => {
   res.json({
-    version: '1.0.0b14',
+    version: '1.0.0b15',
     syncIntervalSeconds: options.sync_interval_seconds,
     remoteEnabled: options.remote_enabled,
   });
@@ -128,9 +128,9 @@ app.post('/api/sync', async (_req, res) => {
   }
 });
 
-app.post('/api/automations/:id/meta', (req, res) => {
+app.post('/api/automations/:id/meta', async (req, res) => {
   try {
-    const updated = automationService.updateMetadata(req.params.id, req.body || {});
+    const updated = await automationService.updateMetadata(req.params.id, req.body || {});
     res.json({ data: updated });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -174,6 +174,15 @@ app.post('/api/git/commit', (req, res) => {
   try {
     const result = automationService.commit(req.body?.message);
     res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/git/status', (_req, res) => {
+  try {
+    const result = automationService.gitStatus();
+    res.json({ data: result });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }

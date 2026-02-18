@@ -55,6 +55,18 @@ remote_ssh_key: ""
 remote_ssh_key_base64: "LS0tLS1CRUdJTiBPUEVOU1NIIFBSSVZBVEUgS0VZLS0tLS0K..."
 ```
 
+How to generate `remote_ssh_key_base64` from local key file:
+
+```bash
+base64 < ~/.ssh/id_ed25519 | tr -d '\n'
+```
+
+If your shell uses GNU coreutils, this also works:
+
+```bash
+base64 -w 0 ~/.ssh/id_ed25519
+```
+
 If your environment uses a custom SSH host alias (for example `github-nuc`), set URL like:
 
 ```yaml

@@ -472,23 +472,92 @@ class AutomationService {
     };
   }
 
-  updateMetadata(id, payload) {
+  async updateMetadata(id, payload) {
+    const record = this.store.getAutomation(id);
+    if (!record) {
+      throw new Error('Automation does not exist in local catalog.');
+    }
+
     const labels = Array.isArray(payload.labels)
       ? payload.labels.map((value) => String(value).trim()).filter(Boolean)
       : [];
 
     const category = payload.category ? String(payload.category).trim() : '';
     const room = payload.room ? String(payload.room).trim() : '';
+    const applyToHa = payload.applyToHa !== false;
+
+    const status = this.resolveYamlStatus(record);
+    let parsed = null;
+    const yamlPath = this.gitBackup.yamlPath(status, id);
+    if (fs.existsSync(yamlPath)) {
+      try {
+        parsed = yaml.load(fs.readFileSync(yamlPath, 'utf8'));
+      } catch (_error) {
+        parsed = null;
+      }
+    }
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      parsed = (await this.haClient.getAutomationConfig(record.entityId || record.id)) || {
+        alias: record.alias || id,
+        trigger: [],
+        condition: [],
+        action: [],
+      };
+    }
+
+    parsed.category = category || null;
+    parsed.labels = labels;
+    parsed.metadata = {
+      ...(parsed.metadata && typeof parsed.metadata === 'object' ? parsed.metadata : {}),
+      category,
+      labels,
+      room,
+    };
+
+    if (room) {
+      parsed.room = room;
+    } else if (Object.prototype.hasOwnProperty.call(parsed, 'room')) {
+      delete parsed.room;
+    }
+
+    if (!category && Object.prototype.hasOwnProperty.call(parsed, 'category')) {
+      delete parsed.category;
+    }
+
+    const yamlHash = this.buildYamlHash(parsed);
+    this.gitBackup.writeYaml(status, id, parsed);
 
     const updated = this.store.upsertAutomation(id, {
       category,
       labels,
       room,
+      yamlHash,
       updatedAt: new Date().toISOString(),
     });
 
+    let haApplied = false;
+    let haError = '';
+    if (applyToHa && record.status === 'active' && typeof this.haClient.updateAutomationMetadata === 'function') {
+      const targetEntityId = record.entityId || record.id;
+      try {
+        await this.haClient.updateAutomationMetadata(targetEntityId, {
+          category,
+          labels,
+          room,
+        });
+        haApplied = true;
+      } catch (error) {
+        haError = String(error?.message || 'Unknown Home Assistant metadata update error');
+      }
+    }
+
     this.gitBackup.writeMetadata(this.store.state);
-    return updated;
+    return {
+      ...updated,
+      haApplied,
+      haError,
+    };
   }
 
   async quarantineAutomation(id, { confirmed }) {
@@ -649,6 +718,12 @@ class AutomationService {
 
   push() {
     return this.gitBackup.push();
+  }
+
+  gitStatus() {
+    return {
+      hasChanges: this.gitBackup.hasChanges(),
+    };
   }
 }
 

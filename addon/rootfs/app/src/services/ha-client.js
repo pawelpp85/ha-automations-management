@@ -55,6 +55,11 @@ class HaClient {
     this.entityIdByAutomationId = new Map();
     this.entityIdsByDeviceId = new Map();
     this.deviceNameByDeviceId = new Map();
+    this.areaNameById = new Map();
+    this.areaIdByName = new Map();
+    this.labelNameById = new Map();
+    this.labelIdByName = new Map();
+    this.categoryIdByNameByScope = new Map();
     this.categoryNameByScope = new Map();
     this.deviceRegistryLoadedAt = 0;
     this.categoryRegistryLoadedAt = 0;
@@ -75,6 +80,38 @@ class HaClient {
     this.entityIdsByDeviceId.get(normalizedDeviceId).add(normalizedEntityId);
   }
 
+  updateAreaCache(entries) {
+    this.areaNameById = new Map();
+    this.areaIdByName = new Map();
+    for (const entry of entries || []) {
+      const areaId = String(entry?.area_id || entry?.id || '').trim();
+      if (!areaId) {
+        continue;
+      }
+      const areaName = String(entry?.name || '').trim();
+      this.areaNameById.set(areaId, areaName || areaId);
+      if (areaName) {
+        this.areaIdByName.set(areaName.toLowerCase(), areaId);
+      }
+    }
+  }
+
+  updateLabelCache(entries) {
+    this.labelNameById = new Map();
+    this.labelIdByName = new Map();
+    for (const entry of entries || []) {
+      const labelId = String(entry?.label_id || entry?.id || '').trim();
+      if (!labelId) {
+        continue;
+      }
+      const labelName = String(entry?.name || '').trim();
+      this.labelNameById.set(labelId, labelName || labelId);
+      if (labelName) {
+        this.labelIdByName.set(labelName.toLowerCase(), labelId);
+      }
+    }
+  }
+
   updateCategoryScope(scope, entries) {
     const normalizedScope = String(scope || '').trim();
     if (!normalizedScope) {
@@ -82,6 +119,7 @@ class HaClient {
     }
 
     const map = new Map();
+    const idByName = new Map();
     for (const entry of entries || []) {
       const categoryId = String(entry?.category_id || entry?.id || '').trim();
       if (!categoryId) {
@@ -89,10 +127,14 @@ class HaClient {
       }
       const categoryName = String(entry?.name || '').trim();
       map.set(categoryId, categoryName || categoryId);
+      if (categoryName) {
+        idByName.set(categoryName.toLowerCase(), categoryId);
+      }
     }
 
     if (map.size > 0) {
       this.categoryNameByScope.set(normalizedScope, map);
+      this.categoryIdByNameByScope.set(normalizedScope, idByName);
     }
   }
 
@@ -309,6 +351,8 @@ class HaClient {
       const labelNameById = new Map(
         (labels || []).map((label) => [String(label.label_id || label.id || ''), String(label.name || '')])
       );
+      this.updateAreaCache(areas || []);
+      this.updateLabelCache(labels || []);
       for (const scope of CATEGORY_SCOPES) {
         this.updateCategoryScope(scope, categoriesByScope[scope] || []);
       }
@@ -739,6 +783,143 @@ class HaClient {
       }
       console.warn(`Could not verify automation existence for ${entityId}; skipping quarantine for safety.`, error.message);
       return true;
+    }
+  }
+
+  resolveAreaId(value) {
+    const room = String(value || '').trim();
+    if (!room) {
+      return null;
+    }
+
+    if (this.areaNameById.has(room)) {
+      return room;
+    }
+
+    const byName = this.areaIdByName.get(room.toLowerCase());
+    return byName || null;
+  }
+
+  resolveLabelIds(values) {
+    const resolved = [];
+    const unknown = [];
+
+    for (const raw of values || []) {
+      const value = String(raw || '').trim();
+      if (!value) {
+        continue;
+      }
+
+      if (this.labelNameById.has(value)) {
+        resolved.push(value);
+        continue;
+      }
+
+      const byName = this.labelIdByName.get(value.toLowerCase());
+      if (byName) {
+        resolved.push(byName);
+        continue;
+      }
+
+      unknown.push(value);
+    }
+
+    return {
+      resolved: [...new Set(resolved)],
+      unknown,
+    };
+  }
+
+  resolveCategoryId(value, scopes = CATEGORY_SCOPES) {
+    const category = String(value || '').trim();
+    if (!category) {
+      return null;
+    }
+
+    for (const scope of scopes) {
+      const byId = this.categoryNameByScope.get(scope);
+      if (byId?.has(category)) {
+        return category;
+      }
+
+      const byName = this.categoryIdByNameByScope.get(scope);
+      const resolved = byName?.get(category.toLowerCase());
+      if (resolved) {
+        return resolved;
+      }
+    }
+
+    return null;
+  }
+
+  async fetchMetadataRegistries(client) {
+    const [areas, labels] = await Promise.all([
+      client.request('config/area_registry/list').catch(() => []),
+      client.request('config/label_registry/list').catch(() => []),
+    ]);
+
+    const categoriesByScope = {};
+    for (const scope of CATEGORY_SCOPES) {
+      categoriesByScope[scope] = await client.request('config/category_registry/list', { scope }).catch(() => []);
+    }
+
+    this.updateAreaCache(areas || []);
+    this.updateLabelCache(labels || []);
+    for (const scope of CATEGORY_SCOPES) {
+      this.updateCategoryScope(scope, categoriesByScope[scope] || []);
+    }
+    this.categoryRegistryLoadedAt = Date.now();
+  }
+
+  async updateAutomationMetadata(entityId, payload = {}) {
+    const targetEntityId = String(entityId || '').trim();
+    if (!targetEntityId.startsWith('automation.')) {
+      throw new Error('Metadata sync to HA requires valid automation entity_id.');
+    }
+
+    const room = String(payload.room || '').trim();
+    const category = String(payload.category || '').trim();
+    const labels = Array.isArray(payload.labels)
+      ? payload.labels.map((entry) => String(entry).trim()).filter(Boolean)
+      : [];
+
+    const client = await this.createWsClient();
+    try {
+      await this.fetchMetadataRegistries(client);
+
+      const areaId = this.resolveAreaId(room);
+      if (room && !areaId) {
+        throw new Error(`Room "${room}" was not found in Home Assistant areas.`);
+      }
+
+      const labelResult = this.resolveLabelIds(labels);
+      if (labelResult.unknown.length) {
+        throw new Error(`Unknown HA labels: ${labelResult.unknown.join(', ')}`);
+      }
+
+      let categoryId = null;
+      if (category) {
+        categoryId = this.resolveCategoryId(category, ['automation', 'entity']);
+        if (!categoryId) {
+          throw new Error(`Unknown HA category: ${category}`);
+        }
+      }
+
+      await client.request('config/entity_registry/update', {
+        entity_id: targetEntityId,
+        area_id: areaId,
+        labels: labelResult.resolved,
+        categories: {
+          automation: categoryId,
+        },
+      });
+
+      return {
+        applied: true,
+        entityId: targetEntityId,
+      };
+    } finally {
+      client.close();
     }
   }
 
