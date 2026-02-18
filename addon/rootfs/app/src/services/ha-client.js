@@ -4,7 +4,11 @@ const yaml = require('js-yaml');
 const WebSocket = require('ws');
 
 const HA_WS_TIMEOUT_MS = 12000;
-const CATEGORY_SCOPES = ['automation', 'entity'];
+const CATEGORY_SCOPES = ['automation', 'script', 'entity'];
+const DOMAIN_SCOPES = {
+  automation: ['automation', 'entity'],
+  script: ['script', 'entity'],
+};
 
 class HaHttpError extends Error {
   constructor(status, requestPath, bodyText) {
@@ -43,17 +47,25 @@ class HaClient {
     this.token = process.env.SUPERVISOR_TOKEN || process.env.HA_TOKEN || '';
 
     this.wsAutomationApiSupported = true;
+    this.wsScriptApiSupported = true;
     this.globalAutomationConfigApiSupported = true;
+    this.globalScriptConfigApiSupported = true;
     this.itemAutomationConfigApiSupported = true;
+    this.itemScriptConfigApiSupported = true;
 
     this.warnedUnsupportedWsApi = false;
+    this.warnedUnsupportedWsScriptApi = false;
     this.warnedUnsupportedListApi = false;
+    this.warnedUnsupportedScriptListApi = false;
     this.warnedUnsupportedItemApi = false;
+    this.warnedUnsupportedScriptItemApi = false;
     this.warnedDedicatedConfigError = false;
+    this.warnedDedicatedScriptConfigError = false;
 
     this.cachedConfigs = new Map();
     this.entityIdByAutomationId = new Map();
     this.entityIdsByDeviceId = new Map();
+    this.deviceIdByEntityId = new Map();
     this.deviceNameByDeviceId = new Map();
     this.areaNameById = new Map();
     this.areaIdByName = new Map();
@@ -63,7 +75,8 @@ class HaClient {
     this.categoryNameByScope = new Map();
     this.deviceRegistryLoadedAt = 0;
     this.categoryRegistryLoadedAt = 0;
-    this.yamlPath = process.env.HA_AUTOMATIONS_YAML_PATH || '/config/automations.yaml';
+    this.automationsYamlPath = process.env.HA_AUTOMATIONS_YAML_PATH || '/config/automations.yaml';
+    this.scriptsYamlPath = process.env.HA_SCRIPTS_YAML_PATH || '/config/scripts.yaml';
   }
 
   addDeviceEntityLink(deviceId, entityId) {
@@ -78,6 +91,7 @@ class HaClient {
     }
 
     this.entityIdsByDeviceId.get(normalizedDeviceId).add(normalizedEntityId);
+    this.deviceIdByEntityId.set(normalizedEntityId, normalizedDeviceId);
   }
 
   updateAreaCache(entries) {
@@ -288,21 +302,22 @@ class HaClient {
     return response.json();
   }
 
-  readYamlAutomations() {
-    if (!fs.existsSync(this.yamlPath)) {
+  readYamlByDomain(domain) {
+    const yamlPath = domain === 'script' ? this.scriptsYamlPath : this.automationsYamlPath;
+    if (!fs.existsSync(yamlPath)) {
       return [];
     }
 
     try {
-      const parsed = yaml.load(fs.readFileSync(this.yamlPath, 'utf8'));
+      const parsed = yaml.load(fs.readFileSync(yamlPath, 'utf8'));
       return Array.isArray(parsed) ? parsed : [];
     } catch (error) {
-      console.warn(`Failed to parse ${this.yamlPath}:`, error.message);
+      console.warn(`Failed to parse ${yamlPath}:`, error.message);
       return [];
     }
   }
 
-  async listViaWsApi() {
+  async listViaWsApi(domain = 'automation') {
     const client = await this.createWsClient();
 
     try {
@@ -358,6 +373,7 @@ class HaClient {
       }
       this.categoryRegistryLoadedAt = Date.now();
       this.entityIdsByDeviceId.clear();
+      this.deviceIdByEntityId.clear();
       this.deviceNameByDeviceId.clear();
       for (const entry of entities || []) {
         this.addDeviceEntityLink(entry?.device_id, entry?.entity_id);
@@ -379,19 +395,20 @@ class HaClient {
       }
       this.deviceRegistryLoadedAt = Date.now();
 
-      const automationEntities = (entities || []).filter(
-        (entry) => entry && typeof entry.entity_id === 'string' && entry.entity_id.startsWith('automation.')
+      const domainPrefix = `${domain}.`;
+      const domainEntities = (entities || []).filter(
+        (entry) => entry && typeof entry.entity_id === 'string' && entry.entity_id.startsWith(domainPrefix)
       );
 
       const output = [];
       let staleRegistrySkipped = 0;
 
-      for (const entry of automationEntities) {
+      for (const entry of domainEntities) {
         let config = null;
         let configNotFound = false;
 
         try {
-          const payload = await client.request('automation/config', { entity_id: entry.entity_id });
+          const payload = await client.request(`${domain}/config`, { entity_id: entry.entity_id });
           config = payload?.config || null;
         } catch (error) {
           if (isUnknownWsCommand(error)) {
@@ -411,7 +428,7 @@ class HaClient {
           continue;
         }
 
-        const automationId = entry.entity_id;
+        const entityId = entry.entity_id;
         const haUniqueId = entry.unique_id || '';
         const alias = config?.alias || entry.original_name || entry.entity_id;
         const areaId = String(entry.area_id || entry.area || '');
@@ -426,22 +443,22 @@ class HaClient {
         const rawCategory = String(
           entry.category
             || entry.category_id
-            || entry.categories?.automation
+            || entry.categories?.[domain]
             || entry.categories?.entity
             || ''
         );
-        const category = this.resolveCategoryValue(rawCategory, CATEGORY_SCOPES);
+        const category = this.resolveCategoryValue(rawCategory, DOMAIN_SCOPES[domain] || CATEGORY_SCOPES);
 
         if (config) {
-          this.cachedConfigs.set(automationId, config);
+          this.cachedConfigs.set(entityId, config);
           if (haUniqueId) {
             this.cachedConfigs.set(haUniqueId, config);
           }
-          this.entityIdByAutomationId.set(automationId, entry.entity_id);
+          this.entityIdByAutomationId.set(entityId, entry.entity_id);
         }
 
         output.push({
-          id: automationId,
+          id: entityId,
           edit_id: haUniqueId || '',
           alias,
           entity_id: entry.entity_id,
@@ -464,7 +481,7 @@ class HaClient {
 
       if (staleRegistrySkipped > 0) {
         console.warn(
-          `Skipped ${staleRegistrySkipped} stale automation registry entries with missing state/config.`
+          `Skipped ${staleRegistrySkipped} stale ${domain} registry entries with missing state/config.`
         );
       }
 
@@ -474,28 +491,29 @@ class HaClient {
     }
   }
 
-  async listFromStatesAndYaml() {
+  async listFromStatesAndYaml(domain = 'automation') {
     const states = await this.request('/api/states');
     await this.ensureCategoryRegistryCache();
-    const automations = states.filter((entry) => String(entry.entity_id || '').startsWith('automation.'));
-    const yamlAutomations = this.readYamlAutomations();
+    const domainPrefix = `${domain}.`;
+    const entities = states.filter((entry) => String(entry.entity_id || '').startsWith(domainPrefix));
+    const yamlEntities = this.readYamlByDomain(domain);
     const usedIndexes = new Set();
 
-    const output = automations.map((entry) => {
+    const output = entities.map((entry) => {
       const entityId = entry.entity_id;
       const alias = entry.attributes?.friendly_name || entityId;
       const aliasSlug = slugify(alias);
 
       let matchedIndex = -1;
 
-      for (let i = 0; i < yamlAutomations.length; i += 1) {
+      for (let i = 0; i < yamlEntities.length; i += 1) {
         if (usedIndexes.has(i)) continue;
-        const candidate = yamlAutomations[i] || {};
+        const candidate = yamlEntities[i] || {};
         const candidateAlias = String(candidate.alias || '');
         const candidateAliasSlug = slugify(candidateAlias);
         const candidateIdSlug = slugify(candidate.id || '');
 
-        if (candidateAlias === alias || candidateAliasSlug === aliasSlug || `automation.${candidateIdSlug}` === entityId) {
+        if (candidateAlias === alias || candidateAliasSlug === aliasSlug || `${domain}.${candidateIdSlug}` === entityId) {
           matchedIndex = i;
           break;
         }
@@ -506,13 +524,17 @@ class HaClient {
       }
 
       const rawConfig = matchedIndex >= 0
-        ? yamlAutomations[matchedIndex]
+        ? yamlEntities[matchedIndex]
         : {
             alias,
             description: entry.attributes?.description || '',
-            trigger: [],
-            condition: [],
-            action: [],
+            ...(domain === 'script'
+              ? { sequence: [] }
+              : {
+                  trigger: [],
+                  condition: [],
+                  action: [],
+                }),
           };
 
       this.cachedConfigs.set(entityId, rawConfig);
@@ -530,7 +552,7 @@ class HaClient {
         label_names: [],
         category: this.resolveCategoryValue(
           String(entry.attributes?.category || entry.attributes?.category_id || ''),
-          CATEGORY_SCOPES
+          DOMAIN_SCOPES[domain] || CATEGORY_SCOPES
         ),
         ha_enabled: String(entry.state || '').toLowerCase() !== 'off',
         raw_config: rawConfig,
@@ -555,6 +577,7 @@ class HaClient {
         ]);
 
         this.entityIdsByDeviceId.clear();
+        this.deviceIdByEntityId.clear();
         this.deviceNameByDeviceId.clear();
         for (const entry of entities || []) {
           this.addDeviceEntityLink(entry?.device_id, entry?.entity_id);
@@ -606,27 +629,34 @@ class HaClient {
     }
   }
 
-  async listAutomations() {
-    if (this.wsAutomationApiSupported) {
+  async listByDomain(domain) {
+    const wsSupportKey = domain === 'script' ? 'wsScriptApiSupported' : 'wsAutomationApiSupported';
+    const wsWarnedKey = domain === 'script' ? 'warnedUnsupportedWsScriptApi' : 'warnedUnsupportedWsApi';
+    const globalSupportKey = domain === 'script' ? 'globalScriptConfigApiSupported' : 'globalAutomationConfigApiSupported';
+    const globalWarnedKey = domain === 'script' ? 'warnedUnsupportedScriptListApi' : 'warnedUnsupportedListApi';
+    const itemSupportScopes = DOMAIN_SCOPES[domain] || CATEGORY_SCOPES;
+    const domainPrefix = `${domain}.`;
+
+    if (this[wsSupportKey]) {
       try {
-        return await this.listViaWsApi();
+        return await this.listViaWsApi(domain);
       } catch (error) {
         if (isUnknownWsCommand(error)) {
-          this.wsAutomationApiSupported = false;
-          if (!this.warnedUnsupportedWsApi) {
-            console.warn('HA websocket automation/config is unavailable; switching to REST/state fallback.');
-            this.warnedUnsupportedWsApi = true;
+          this[wsSupportKey] = false;
+          if (!this[wsWarnedKey]) {
+            console.warn(`HA websocket ${domain}/config is unavailable; switching to REST/state fallback.`);
+            this[wsWarnedKey] = true;
           }
         } else {
-          console.warn('HA websocket list failed, switching to REST/state fallback:', error.message);
+          console.warn(`HA websocket ${domain} list failed, switching to REST/state fallback:`, error.message);
         }
       }
     }
 
-    if (this.globalAutomationConfigApiSupported) {
+    if (this[globalSupportKey]) {
       try {
         await this.ensureCategoryRegistryCache();
-        const data = await this.request('/api/config/automation/config');
+        const data = await this.request(`/api/config/${domain}/config`);
         const list = Array.isArray(data) ? data : [];
         const normalized = [];
         let states = [];
@@ -643,7 +673,7 @@ class HaClient {
 
         for (const entry of list) {
           const rawId = entry.id || entry.entity_id;
-          const id = entry.entity_id || (String(rawId || '').startsWith('automation.') ? rawId : `automation.${rawId}`);
+          const id = entry.entity_id || (String(rawId || '').startsWith(domainPrefix) ? rawId : `${domain}.${rawId}`);
           if (id) {
             const rawConfig = entry.raw_config || entry;
             this.cachedConfigs.set(id, rawConfig);
@@ -665,7 +695,7 @@ class HaClient {
               labels: Array.isArray(entry.labels) ? entry.labels : (Array.isArray(entry.label_ids) ? entry.label_ids : []),
               label_ids: Array.isArray(entry.label_ids) ? entry.label_ids : [],
               label_names: Array.isArray(entry.label_names) ? entry.label_names : [],
-              category: this.resolveCategoryValue(String(entry.category || entry.category_id || ''), CATEGORY_SCOPES),
+              category: this.resolveCategoryValue(String(entry.category || entry.category_id || ''), itemSupportScopes),
               ha_enabled: haEnabled,
               raw_config: rawConfig,
             });
@@ -675,36 +705,50 @@ class HaClient {
         return normalized;
       } catch (error) {
         if (isEndpointMissing(error)) {
-          this.globalAutomationConfigApiSupported = false;
-          if (!this.warnedUnsupportedListApi) {
-            console.warn('HA endpoint /api/config/automation/config is unavailable; using /api/states + automations.yaml fallback.');
-            this.warnedUnsupportedListApi = true;
+          this[globalSupportKey] = false;
+          if (!this[globalWarnedKey]) {
+            console.warn(`HA endpoint /api/config/${domain}/config is unavailable; using /api/states + YAML fallback.`);
+            this[globalWarnedKey] = true;
           }
         } else {
-          console.warn('Failed to list automations via config endpoint, fallback to states:', error.message);
+          console.warn(`Failed to list ${domain}s via config endpoint, fallback to states:`, error.message);
         }
       }
     }
 
-    return this.listFromStatesAndYaml();
+    return this.listFromStatesAndYaml(domain);
   }
 
-  async getAutomationConfig(automationId) {
-    if (this.cachedConfigs.has(automationId)) {
-      return this.cachedConfigs.get(automationId);
+  async listAutomations() {
+    return this.listByDomain('automation');
+  }
+
+  async listScripts() {
+    return this.listByDomain('script');
+  }
+
+  async getConfigByDomain(entityId, domain) {
+    if (this.cachedConfigs.has(entityId)) {
+      return this.cachedConfigs.get(entityId);
     }
 
-    if (this.wsAutomationApiSupported) {
+    const wsSupportKey = domain === 'script' ? 'wsScriptApiSupported' : 'wsAutomationApiSupported';
+    const itemSupportKey = domain === 'script' ? 'itemScriptConfigApiSupported' : 'itemAutomationConfigApiSupported';
+    const warnedItemKey = domain === 'script' ? 'warnedUnsupportedScriptItemApi' : 'warnedUnsupportedItemApi';
+    const warnedDedicatedKey = domain === 'script' ? 'warnedDedicatedScriptConfigError' : 'warnedDedicatedConfigError';
+    const domainPrefix = `${domain}.`;
+
+    if (this[wsSupportKey]) {
       try {
-        const entityId = this.entityIdByAutomationId.get(automationId) || automationId;
-        if (typeof entityId === 'string' && entityId.startsWith('automation.')) {
+        const resolvedEntityId = this.entityIdByAutomationId.get(entityId) || entityId;
+        if (typeof resolvedEntityId === 'string' && resolvedEntityId.startsWith(domainPrefix)) {
           const client = await this.createWsClient();
           try {
-            const payload = await client.request('automation/config', { entity_id: entityId });
+            const payload = await client.request(`${domain}/config`, { entity_id: resolvedEntityId });
             const config = payload?.config || null;
             if (config) {
-              this.cachedConfigs.set(automationId, config);
-              this.entityIdByAutomationId.set(automationId, entityId);
+              this.cachedConfigs.set(entityId, config);
+              this.entityIdByAutomationId.set(entityId, resolvedEntityId);
             }
             return config;
           } finally {
@@ -713,79 +757,103 @@ class HaClient {
         }
       } catch (error) {
         if (isUnknownWsCommand(error)) {
-          this.wsAutomationApiSupported = false;
+          this[wsSupportKey] = false;
         }
       }
     }
 
-    if (!this.itemAutomationConfigApiSupported) {
+    if (!this[itemSupportKey]) {
       return null;
     }
 
-    const safeId = encodeURIComponent(automationId);
+    const safeId = encodeURIComponent(entityId);
     try {
-      const config = await this.request(`/api/config/automation/config/${safeId}`);
-      this.cachedConfigs.set(automationId, config);
+      const config = await this.request(`/api/config/${domain}/config/${safeId}`);
+      this.cachedConfigs.set(entityId, config);
       return config;
     } catch (error) {
       if (isEndpointMissing(error)) {
-        this.itemAutomationConfigApiSupported = false;
-        if (!this.warnedUnsupportedItemApi) {
-          console.warn('HA endpoint /api/config/automation/config/:id is unavailable; using cached or fallback config only.');
-          this.warnedUnsupportedItemApi = true;
+        this[itemSupportKey] = false;
+        if (!this[warnedItemKey]) {
+          console.warn(`HA endpoint /api/config/${domain}/config/:id is unavailable; using cached or fallback config only.`);
+          this[warnedItemKey] = true;
         }
         return null;
       }
 
-      if (!this.warnedDedicatedConfigError) {
-        console.warn('Could not fetch dedicated automation config; using fallback data only.', error.message);
-        this.warnedDedicatedConfigError = true;
+      if (!this[warnedDedicatedKey]) {
+        console.warn(`Could not fetch dedicated ${domain} config; using fallback data only.`, error.message);
+        this[warnedDedicatedKey] = true;
       }
       return null;
     }
   }
 
-  async deleteAutomation(automationId) {
-    const safeId = encodeURIComponent(automationId);
+  async getAutomationConfig(automationId) {
+    return this.getConfigByDomain(automationId, 'automation');
+  }
+
+  async getScriptConfig(scriptId) {
+    return this.getConfigByDomain(scriptId, 'script');
+  }
+
+  async deleteByDomain(entityId, domain) {
+    const safeId = encodeURIComponent(entityId);
 
     try {
-      await this.request(`/api/config/automation/config/${safeId}`, {
+      await this.request(`/api/config/${domain}/config/${safeId}`, {
         method: 'DELETE',
       });
       return;
     } catch (error) {
       if (isEndpointMissing(error)) {
-        throw new Error('Your Home Assistant does not expose automation config delete API. Quarantine delete from HA is not available in this mode.');
+        throw new Error(`Your Home Assistant does not expose ${domain} config delete API. Quarantine delete from HA is not available in this mode.`);
       }
       throw error;
     }
   }
 
-  async upsertAutomation(automationId, config) {
-    const safeId = encodeURIComponent(automationId);
+  async deleteAutomation(automationId) {
+    return this.deleteByDomain(automationId, 'automation');
+  }
+
+  async deleteScript(scriptId) {
+    return this.deleteByDomain(scriptId, 'script');
+  }
+
+  async upsertByDomain(entityId, config, domain) {
+    const safeId = encodeURIComponent(entityId);
 
     try {
-      return await this.request(`/api/config/automation/config/${safeId}`, {
+      return await this.request(`/api/config/${domain}/config/${safeId}`, {
         method: 'POST',
         body: JSON.stringify(config),
       });
     } catch (error) {
       if (isEndpointMissing(error)) {
-        throw new Error('Your Home Assistant does not expose automation config write API. Restore is not available in this mode.');
+        throw new Error(`Your Home Assistant does not expose ${domain} config write API. Restore is not available in this mode.`);
       }
 
-      return this.request('/api/config/automation/config', {
+      return this.request(`/api/config/${domain}/config`, {
         method: 'POST',
         body: JSON.stringify({
-          id: automationId,
+          id: entityId,
           ...config,
         }),
       });
     }
   }
 
-  async automationExists(entityId) {
-    if (!entityId || !String(entityId).startsWith('automation.')) {
+  async upsertAutomation(automationId, config) {
+    return this.upsertByDomain(automationId, config, 'automation');
+  }
+
+  async upsertScript(scriptId, config) {
+    return this.upsertByDomain(scriptId, config, 'script');
+  }
+
+  async entityExists(entityId, domain = 'automation') {
+    if (!entityId || !String(entityId).startsWith(`${domain}.`)) {
       return false;
     }
 
@@ -796,9 +864,17 @@ class HaClient {
       if (isEndpointMissing(error)) {
         return false;
       }
-      console.warn(`Could not verify automation existence for ${entityId}; skipping quarantine for safety.`, error.message);
+      console.warn(`Could not verify ${domain} existence for ${entityId}; skipping quarantine for safety.`, error.message);
       return true;
     }
+  }
+
+  async automationExists(entityId) {
+    return this.entityExists(entityId, 'automation');
+  }
+
+  async scriptExists(entityId) {
+    return this.entityExists(entityId, 'script');
   }
 
   resolveAreaId(value) {
@@ -886,11 +962,12 @@ class HaClient {
     this.categoryRegistryLoadedAt = Date.now();
   }
 
-  async updateAutomationMetadata(entityId, payload = {}) {
+  async updateEntityMetadata(entityId, payload = {}) {
     const targetEntityId = String(entityId || '').trim();
-    if (!targetEntityId.startsWith('automation.')) {
-      throw new Error('Metadata sync to HA requires valid automation entity_id.');
+    if (!targetEntityId.startsWith('automation.') && !targetEntityId.startsWith('script.')) {
+      throw new Error('Metadata sync to HA requires valid automation/script entity_id.');
     }
+    const domain = targetEntityId.startsWith('script.') ? 'script' : 'automation';
 
     const room = String(payload.room || '').trim();
     const category = String(payload.category || '').trim();
@@ -914,7 +991,7 @@ class HaClient {
 
       let categoryId = null;
       if (category) {
-        categoryId = this.resolveCategoryId(category, ['automation', 'entity']);
+        categoryId = this.resolveCategoryId(category, DOMAIN_SCOPES[domain] || CATEGORY_SCOPES);
         if (!categoryId) {
           throw new Error(`Unknown HA category: ${category}`);
         }
@@ -925,7 +1002,7 @@ class HaClient {
         area_id: areaId,
         labels: labelResult.resolved,
         categories: {
-          automation: categoryId,
+          [domain]: categoryId,
         },
       });
 
@@ -938,29 +1015,43 @@ class HaClient {
     }
   }
 
+  async updateAutomationMetadata(entityId, payload = {}) {
+    return this.updateEntityMetadata(entityId, payload);
+  }
+
   async resolveDeviceReference(reference) {
     const ref = String(reference || '').trim();
     if (!ref) {
       return [];
     }
 
+    await this.ensureDeviceRegistryCache();
+
     if (/^[a-z0-9_]+\.[a-z0-9_]+$/i.test(ref)) {
+      const sourceDeviceId = this.deviceIdByEntityId.get(ref) || '';
+      if (sourceDeviceId) {
+        const deviceName = this.deviceNameByDeviceId.get(sourceDeviceId) || ref;
+        return [{
+          key: sourceDeviceId,
+          display: deviceName,
+          sourceDeviceId,
+        }];
+      }
+
       return [{
         key: ref,
         display: ref,
       }];
     }
 
-    await this.ensureDeviceRegistryCache();
     const mapped = this.entityIdsByDeviceId.get(ref);
     if (mapped && mapped.size) {
-      return [...mapped]
-        .sort((a, b) => a.localeCompare(b))
-        .map((entityId) => ({
-          key: entityId,
-          display: entityId,
-          sourceDeviceId: ref,
-        }));
+      const deviceName = this.deviceNameByDeviceId.get(ref) || [...mapped].sort((a, b) => a.localeCompare(b))[0] || ref;
+      return [{
+        key: ref,
+        display: deviceName,
+        sourceDeviceId: ref,
+      }];
     }
 
     const deviceName = this.deviceNameByDeviceId.get(ref) || '';

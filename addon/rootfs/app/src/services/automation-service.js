@@ -126,6 +126,11 @@ function normalizeCategory(value) {
   return normalizeString(value);
 }
 
+function normalizeEntityType(value) {
+  const type = String(value || '').trim().toLowerCase();
+  return type === 'script' ? 'script' : 'automation';
+}
+
 class AutomationService {
   constructor({ store, haClient, gitBackup }) {
     this.store = store;
@@ -135,6 +140,21 @@ class AutomationService {
 
   buildYamlHash(payload) {
     return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  }
+
+  resolveEntityType(record, fallbackId = '') {
+    if (record && record.entityType) {
+      return normalizeEntityType(record.entityType);
+    }
+    const id = String(record?.id || fallbackId || '').trim();
+    return id.startsWith('script.') ? 'script' : 'automation';
+  }
+
+  listKnownEntities() {
+    return this.store.listAutomations().map((entry) => ({
+      ...entry,
+      entityType: this.resolveEntityType(entry),
+    }));
   }
 
   resolveYamlStatus(record) {
@@ -152,7 +172,14 @@ class AutomationService {
   }
 
   async importFromHa({ automaticCommit = false } = {}) {
-    const automations = await this.haClient.listAutomations();
+    const [automations, scripts] = await Promise.all([
+      this.haClient.listAutomations(),
+      this.haClient.listScripts(),
+    ]);
+    const entities = [
+      ...(automations || []).map((entry) => ({ ...entry, entityType: 'automation' })),
+      ...(scripts || []).map((entry) => ({ ...entry, entityType: 'script' })),
+    ];
     const seenIds = new Set();
     let importedCount = 0;
     let failedCount = 0;
@@ -160,19 +187,20 @@ class AutomationService {
     let migratedCount = 0;
     let cleanedLegacyQuarantineCount = 0;
 
-    for (const automation of automations) {
-      const automationId = normalizeAutomationId(automation.entity_id || automation.id);
-      if (!automationId) {
+    for (const entity of entities) {
+      const entityType = normalizeEntityType(entity.entityType);
+      const entityId = normalizeAutomationId(entity.entity_id || entity.id);
+      if (!entityId) {
         continue;
       }
 
       try {
         const legacyIds = [
-          normalizeAutomationId(automation.id),
-          normalizeAutomationId(automation.ha_unique_id),
-        ].filter((value) => value && value !== automationId);
+          normalizeAutomationId(entity.id),
+          normalizeAutomationId(entity.ha_unique_id),
+        ].filter((value) => value && value !== entityId);
 
-        let existing = this.store.getAutomation(automationId);
+        let existing = this.store.getAutomation(entityId);
         for (const legacyId of legacyIds) {
           const legacy = this.store.getAutomation(legacyId);
           if (!legacy) {
@@ -196,34 +224,39 @@ class AutomationService {
           this.store.deleteAutomation(legacyId);
         }
 
-        seenIds.add(automationId);
+        seenIds.add(entityId);
 
-        const config = (await this.haClient.getAutomationConfig(automationId)) || automation.raw_config || automation;
+        const config = (
+          entityType === 'script'
+            ? await this.haClient.getScriptConfig(entityId)
+            : await this.haClient.getAutomationConfig(entityId)
+        ) || entity.raw_config || entity;
         const importedClassification = mergeClassification(
           extractClassificationFromConfig(config),
           {
-            category: normalizeCategory(automation.category || automation.category_id || ''),
-            room: automation.room || automation.area_name || automation.area_id || '',
-            labels: automation.labels || automation.label_names || automation.label_ids || [],
+            category: normalizeCategory(entity.category || entity.category_id || ''),
+            room: entity.room || entity.area_name || entity.area_id || '',
+            labels: entity.labels || entity.label_names || entity.label_ids || [],
           }
         );
         const yamlHash = this.buildYamlHash(config);
         const previouslyMissing = existing && existing.status === 'quarantine' && existing.autoQuarantined;
 
-        this.gitBackup.writeYaml('active', automationId, config);
+        this.gitBackup.writeYaml('active', entityId, config);
 
-        this.store.upsertAutomation(automationId, {
-          id: automationId,
-          entityId: automation.entity_id || existing?.entityId || automationId,
-          editId: automation.edit_id || automation.ha_unique_id || existing?.editId || '',
-          alias: automation.alias || automation.name || automationId,
+        this.store.upsertAutomation(entityId, {
+          id: entityId,
+          entityType,
+          entityId: entity.entity_id || existing?.entityId || entityId,
+          editId: entity.edit_id || entity.ha_unique_id || existing?.editId || '',
+          alias: entity.alias || entity.name || entityId,
           yamlHash,
           lastImportedAt: new Date().toISOString(),
           lastSeenInHa: new Date().toISOString(),
           status: 'active',
-          haEnabled: automation.ha_enabled !== false,
+          haEnabled: entity.ha_enabled !== false,
           autoQuarantined: false,
-          haUniqueId: automation.ha_unique_id || existing?.haUniqueId || '',
+          haUniqueId: entity.ha_unique_id || existing?.haUniqueId || '',
           category: importedClassification.category || existing?.category || '',
           labels: importedClassification.labels.length ? importedClassification.labels : (existing?.labels || []),
           room: importedClassification.room || existing?.room || '',
@@ -235,23 +268,26 @@ class AutomationService {
         }
       } catch (error) {
         failedCount += 1;
-        console.warn(`Skipping automation ${automationId} due to import error:`, error.message);
+        console.warn(`Skipping ${entityType} ${entityId} due to import error:`, error.message);
       }
     }
 
-    const known = this.store.listAutomations();
+    const known = this.listKnownEntities();
     let pendingMissingCount = 0;
     for (const record of known) {
       const recordId = normalizeAutomationId(record.id);
       if (record.status === 'active' && !seenIds.has(recordId)) {
-        if (automations.length === 0) {
+        if (entities.length === 0) {
           this.store.upsertAutomation(record.id, {
             missingSeenCount: 0,
           });
           continue;
         }
 
-        const existsInHa = await this.haClient.automationExists(normalizeAutomationId(record.entityId || record.id));
+        const recordType = this.resolveEntityType(record);
+        const existsInHa = recordType === 'script'
+          ? await this.haClient.scriptExists(normalizeAutomationId(record.entityId || record.id))
+          : await this.haClient.automationExists(normalizeAutomationId(record.entityId || record.id));
         if (existsInHa) {
           this.store.upsertAutomation(record.id, {
             missingSeenCount: 0,
@@ -279,9 +315,9 @@ class AutomationService {
         });
 
         this.gitBackup.moveToQuarantine(record.id);
-        this.store.addWarning(`Automation ${record.id} disappeared from Home Assistant and was moved to quarantine.`);
+        this.store.addWarning(`${recordType === 'script' ? 'Script' : 'Automation'} ${record.id} disappeared from Home Assistant and was moved to quarantine.`);
         autoQuarantinedCount += 1;
-        console.warn(`Automation ${record.id} auto-quarantined after ${AUTO_QUARANTINE_MISS_THRESHOLD} missing checks.`);
+        console.warn(`${recordType} ${record.id} auto-quarantined after ${AUTO_QUARANTINE_MISS_THRESHOLD} missing checks.`);
       }
     }
 
@@ -295,17 +331,17 @@ class AutomationService {
       );
     }
 
-    const tracked = this.store.listAutomations();
+    const tracked = this.listKnownEntities();
     const activeCount = tracked.filter((entry) => entry.status === 'active').length;
     const quarantineCount = tracked.filter((entry) => entry.status === 'quarantine').length;
 
     console.log(
-      `Import summary: discovered=${automations.length}, changed=${importedCount}, failed=${failedCount}, active=${activeCount}, quarantine=${quarantineCount}, pending_missing=${pendingMissingCount}, migrated=${migratedCount}, cleaned_legacy_quarantine=${cleanedLegacyQuarantineCount}`
+      `Import summary: discovered=${entities.length}, changed=${importedCount}, failed=${failedCount}, active=${activeCount}, quarantine=${quarantineCount}, pending_missing=${pendingMissingCount}, migrated=${migratedCount}, cleaned_legacy_quarantine=${cleanedLegacyQuarantineCount}`
     );
 
     return {
       importedCount,
-      total: automations.length,
+      total: entities.length,
       failedCount,
       activeCount,
       quarantineCount,
@@ -318,7 +354,11 @@ class AutomationService {
   }
 
   listAutomations() {
-    return this.store.listAutomations();
+    return this.listKnownEntities().filter((entry) => this.resolveEntityType(entry) === 'automation');
+  }
+
+  listScripts() {
+    return this.listKnownEntities().filter((entry) => this.resolveEntityType(entry) === 'script');
   }
 
   listWarnings() {
@@ -338,7 +378,7 @@ class AutomationService {
   getRawConfiguration(id) {
     const record = this.store.getAutomation(id);
     if (!record) {
-      throw new Error('Automation does not exist in local catalog.');
+      throw new Error('Entity does not exist in local catalog.');
     }
 
     const status = this.resolveYamlStatus(record);
@@ -431,7 +471,7 @@ class AutomationService {
   async updateRawConfiguration(id, payload) {
     const record = this.store.getAutomation(id);
     if (!record) {
-      throw new Error('Automation does not exist in local catalog.');
+      throw new Error('Entity does not exist in local catalog.');
     }
 
     const yamlText = String(payload?.yamlText || '');
@@ -445,10 +485,15 @@ class AutomationService {
 
     if (payload?.applyToHa) {
       if (status !== 'active') {
-        throw new Error('Cannot apply quarantined automation directly to HA. Restore it first.');
+        throw new Error('Cannot apply quarantined entity directly to HA. Restore it first.');
       }
       const targetId = record.entityId || record.id;
-      await this.haClient.upsertAutomation(targetId, parsed);
+      const entityType = this.resolveEntityType(record);
+      if (entityType === 'script') {
+        await this.haClient.upsertScript(targetId, parsed);
+      } else {
+        await this.haClient.upsertAutomation(targetId, parsed);
+      }
     }
 
     const yamlHash = this.buildYamlHash(parsed);
@@ -462,7 +507,7 @@ class AutomationService {
     });
 
     this.gitBackup.writeMetadata(this.store.state);
-    const commitMessage = String(payload?.commitMessage || '').trim() || `feat(raw): update automation ${id}`;
+    const commitMessage = String(payload?.commitMessage || '').trim() || `feat(raw): update entity ${id}`;
     const commit = this.gitBackup.commit(commitMessage);
 
     return {
@@ -475,7 +520,7 @@ class AutomationService {
   async updateMetadata(id, payload) {
     const record = this.store.getAutomation(id);
     if (!record) {
-      throw new Error('Automation does not exist in local catalog.');
+      throw new Error('Entity does not exist in local catalog.');
     }
 
     const labels = Array.isArray(payload.labels)
@@ -498,11 +543,20 @@ class AutomationService {
     }
 
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      parsed = (await this.haClient.getAutomationConfig(record.entityId || record.id)) || {
+      const entityType = this.resolveEntityType(record);
+      parsed = (
+        entityType === 'script'
+          ? await this.haClient.getScriptConfig(record.entityId || record.id)
+          : await this.haClient.getAutomationConfig(record.entityId || record.id)
+      ) || {
         alias: record.alias || id,
-        trigger: [],
-        condition: [],
-        action: [],
+        ...(entityType === 'script'
+          ? { sequence: [] }
+          : {
+              trigger: [],
+              condition: [],
+              action: [],
+            }),
       };
     }
 
@@ -560,17 +614,26 @@ class AutomationService {
     };
   }
 
-  async quarantineAutomation(id, { confirmed }) {
+  async quarantineEntity(id, { confirmed, expectedType }) {
     if (!confirmed) {
-      throw new Error('Quarantine requires confirmed=true to remove automation from Home Assistant.');
+      throw new Error('Quarantine requires confirmed=true to remove entity from Home Assistant.');
     }
 
     const record = this.store.getAutomation(id);
     if (!record || record.status !== 'active') {
-      throw new Error('Automation is not active or does not exist.');
+      throw new Error('Entity is not active or does not exist.');
     }
 
-    await this.haClient.deleteAutomation(id);
+    const entityType = this.resolveEntityType(record);
+    if (expectedType && entityType !== expectedType) {
+      throw new Error(`Entity is not a ${expectedType}.`);
+    }
+
+    if (entityType === 'script') {
+      await this.haClient.deleteScript(id);
+    } else {
+      await this.haClient.deleteAutomation(id);
+    }
     this.gitBackup.moveToQuarantine(id);
 
     const updated = this.store.upsertAutomation(id, {
@@ -583,10 +646,22 @@ class AutomationService {
     return updated;
   }
 
-  async restoreAutomation(id) {
+  async quarantineAutomation(id, { confirmed }) {
+    return this.quarantineEntity(id, { confirmed, expectedType: 'automation' });
+  }
+
+  async quarantineScript(id, { confirmed }) {
+    return this.quarantineEntity(id, { confirmed, expectedType: 'script' });
+  }
+
+  async restoreEntity(id, { expectedType } = {}) {
     const record = this.store.getAutomation(id);
     if (!record || record.status !== 'quarantine') {
-      throw new Error('Automation is not in quarantine.');
+      throw new Error('Entity is not in quarantine.');
+    }
+    const entityType = this.resolveEntityType(record);
+    if (expectedType && entityType !== expectedType) {
+      throw new Error(`Entity is not a ${expectedType}.`);
     }
 
     const quarantinePath = this.gitBackup.yamlPath('quarantine', id);
@@ -598,7 +673,11 @@ class AutomationService {
     }
 
     const parsed = yaml.load(fs.readFileSync(quarantinePath, 'utf8'));
-    await this.haClient.upsertAutomation(id, parsed);
+    if (entityType === 'script') {
+      await this.haClient.upsertScript(id, parsed);
+    } else {
+      await this.haClient.upsertAutomation(id, parsed);
+    }
 
     this.gitBackup.moveToActive(id);
     const updated = this.store.upsertAutomation(id, {
@@ -611,6 +690,14 @@ class AutomationService {
     return updated;
   }
 
+  async restoreAutomation(id) {
+    return this.restoreEntity(id, { expectedType: 'automation' });
+  }
+
+  async restoreScript(id) {
+    return this.restoreEntity(id, { expectedType: 'script' });
+  }
+
   deleteFromQuarantine(id, { confirmed }) {
     if (!confirmed) {
       throw new Error('Permanent delete requires confirmed=true.');
@@ -618,7 +705,7 @@ class AutomationService {
 
     const record = this.store.getAutomation(id);
     if (!record || record.status !== 'quarantine') {
-      throw new Error('Automation is not in quarantine.');
+      throw new Error('Entity is not in quarantine.');
     }
 
     this.gitBackup.deleteQuarantine(id);
@@ -631,7 +718,7 @@ class AutomationService {
   async buildDeviceView() {
     const output = {};
 
-    for (const record of this.store.listAutomations()) {
+    for (const record of this.listKnownEntities()) {
       const status = record.status === 'quarantine' ? 'quarantine' : 'active';
       const yamlPath = this.gitBackup.yamlPath(status, record.id);
       if (!fs.existsSync(yamlPath)) {
@@ -682,6 +769,12 @@ class AutomationService {
               sourceDeviceIds: [],
               automationIds: [],
             };
+          } else {
+            const resolvedName = String(resolved.display || '').trim();
+            const currentName = String(output[key].deviceName || '').trim();
+            if (resolvedName && (!currentName || currentName === output[key].deviceId || UUID_LIKE_PATTERN.test(currentName))) {
+              output[key].deviceName = resolvedName;
+            }
           }
 
           const sourceDeviceId = String(resolved.sourceDeviceId || '').trim();
@@ -692,6 +785,7 @@ class AutomationService {
 
           output[key].automationIds.push({
             id: record.id,
+            entityType: this.resolveEntityType(record),
             editId: record.editId || '',
             alias: record.alias || record.id,
             status: record.status,

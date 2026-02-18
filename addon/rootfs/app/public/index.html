@@ -201,7 +201,7 @@
 
     .filters {
       display: grid;
-      grid-template-columns: repeat(5, minmax(120px, 1fr));
+      grid-template-columns: repeat(6, minmax(110px, 1fr));
       gap: 0.55rem;
       width: min(920px, 100%);
     }
@@ -332,6 +332,11 @@
       overflow: hidden;
       border: 1px solid var(--line);
       background: var(--panel);
+    }
+
+    .device-automation.script {
+      border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+      background: color-mix(in srgb, var(--accent) 10%, var(--panel));
     }
 
     .device-automation button {
@@ -498,6 +503,7 @@
       </div>
       <div class="tabs">
         <button data-tab="automations" class="active" role="tab" aria-selected="true">Automations</button>
+        <button data-tab="scripts" role="tab" aria-selected="false">Scripts</button>
         <button data-tab="devices" role="tab" aria-selected="false">Devices</button>
         <button data-tab="quarantine" role="tab" aria-selected="false">Quarantine</button>
         <button data-tab="raw" role="tab" aria-selected="false">History</button>
@@ -519,6 +525,12 @@
             <option value="disabled">Disabled</option>
             <option value="quarantine">Quarantine</option>
           </select>
+          <select id="f-sort" title="Sort automations by selected field.">
+            <option value="status">Sort: status</option>
+            <option value="category">Sort: category</option>
+            <option value="room">Sort: room</option>
+            <option value="label">Sort: label</option>
+          </select>
         </div>
         <datalist id="name-options"></datalist>
         <datalist id="category-options"></datalist>
@@ -537,6 +549,43 @@
           </tr>
         </thead>
         <tbody id="automations-body"></tbody>
+      </table>
+    </section>
+
+    <section id="view-scripts" class="view">
+      <div class="view-head">
+        <strong>Scripts Catalog</strong>
+        <div class="filters">
+          <input id="sf-name" list="name-options" placeholder="Filter script name" />
+          <input id="sf-category" list="category-options" placeholder="Filter category" />
+          <input id="sf-label" list="label-options" placeholder="Filter label" />
+          <input id="sf-room" list="room-options" placeholder="Filter room" />
+          <select id="sf-status" title="Filter by current script status.">
+            <option value="">All statuses</option>
+            <option value="active">Active</option>
+            <option value="disabled">Disabled</option>
+            <option value="quarantine">Quarantine</option>
+          </select>
+          <select id="sf-sort" title="Sort scripts by selected field.">
+            <option value="status">Sort: status</option>
+            <option value="category">Sort: category</option>
+            <option value="room">Sort: room</option>
+            <option value="label">Sort: label</option>
+          </select>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Script</th>
+            <th>Status</th>
+            <th>Category</th>
+            <th>Labels</th>
+            <th>Room</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="scripts-body"></tbody>
       </table>
     </section>
 
@@ -607,11 +656,14 @@
   <script>
     const state = {
       automations: [],
+      scripts: [],
       devices: [],
       warnings: [],
       inFlight: new Set(),
       gitHasChanges: false,
       filters: { name: '', category: '', label: '', room: '', status: '', device: '' },
+      scriptFilters: { name: '', category: '', label: '', room: '', status: '' },
+      sorting: { automations: 'status', scripts: 'status' },
       raw: {
         selectedId: '',
         loadedId: '',
@@ -773,7 +825,7 @@
       const rooms = new Set();
       const devices = new Set();
 
-      state.automations.forEach((item) => {
+      [...state.automations, ...state.scripts].forEach((item) => {
         if (item.alias) names.add(item.alias);
         if (item.id) names.add(item.id);
         if (item.category) categories.add(item.category);
@@ -797,12 +849,22 @@
       setDatalist('device-options', [...devices].sort((a, b) => a.localeCompare(b)));
     }
 
-    function applyFilter(key, value) {
-      state.filters[key] = value || '';
-      const input = byId(`f-${key}`);
-      if (input) input.value = state.filters[key];
-      renderAutomations();
-      renderQuarantine();
+    function getFilterState(scope) {
+      return scope === 'script' ? state.scriptFilters : state.filters;
+    }
+
+    function applyFilter(scope, key, value) {
+      const filters = getFilterState(scope);
+      filters[key] = value || '';
+      const input = byId(scope === 'script' ? `sf-${key}` : `f-${key}`);
+      if (input) input.value = filters[key];
+
+      if (scope === 'script') {
+        renderScripts();
+      } else {
+        renderAutomations();
+        renderQuarantine();
+      }
     }
 
     function matchesTokenQuery(text, query) {
@@ -829,14 +891,15 @@
       return true;
     }
 
-    function openAutomationEditTab(editId, fallbackId) {
+    function openEntityEditTab(entityType, editId, fallbackId) {
       const target = String(editId || '').trim() || String(fallbackId || '').trim();
       if (!target) {
-        showToast('No automation edit identifier available.');
+        showToast('No entity edit identifier available.');
         return;
       }
 
-      const url = `${window.location.origin}/config/automation/edit/${encodeURIComponent(target)}`;
+      const domain = entityType === 'script' ? 'script' : 'automation';
+      const url = `${window.location.origin}/config/${domain}/edit/${encodeURIComponent(target)}`;
       window.open(url, '_blank', 'noopener');
     }
 
@@ -862,14 +925,16 @@
     }
 
     async function refresh() {
-      const [automations, devices, warnings, gitStatus] = await Promise.all([
+      const [automations, scripts, devices, warnings, gitStatus] = await Promise.all([
         api('/api/automations'),
+        api('/api/scripts'),
         api('/api/devices'),
         api('/api/warnings'),
         api('/api/git/status').catch(() => ({ data: { hasChanges: false } })),
       ]);
 
       state.automations = automations.data || [];
+      state.scripts = scripts.data || [];
       state.devices = devices.data || [];
       state.warnings = warnings.data || [];
       state.gitHasChanges = Boolean(gitStatus?.data?.hasChanges);
@@ -881,6 +946,7 @@
       renderFilterSuggestions();
       renderWarnings();
       renderAutomations();
+      renderScripts();
       renderDevices();
       renderQuarantine();
       renderRawSelect();
@@ -924,20 +990,29 @@
       await refresh();
     }
 
-    function filterAutomation(item) {
-      const n = state.filters.name.trim().toLowerCase();
-      const c = state.filters.category.trim().toLowerCase();
-      const l = state.filters.label.trim().toLowerCase();
-      const r = state.filters.room.trim().toLowerCase();
-      const s = state.filters.status.trim().toLowerCase();
+    function getEntityStatus(item) {
+      return item.status === 'quarantine'
+        ? 'quarantine'
+        : (item.haEnabled === false ? 'disabled' : 'active');
+    }
+
+    function getEntityLabelSortValue(item) {
+      const labels = Array.isArray(item.labels) ? item.labels : [];
+      return labels.map((value) => String(value || '').toLowerCase()).join(' ');
+    }
+
+    function filterEntity(item, filters) {
+      const n = String(filters?.name || '').trim().toLowerCase();
+      const c = String(filters?.category || '').trim().toLowerCase();
+      const l = String(filters?.label || '').trim().toLowerCase();
+      const r = String(filters?.room || '').trim().toLowerCase();
+      const s = String(filters?.status || '').trim().toLowerCase();
 
       const nameText = `${item.alias || ''} ${item.id || ''}`.toLowerCase();
       const category = String(item.category || '').toLowerCase();
       const room = String(item.room || '').toLowerCase();
       const labels = (item.labels || []).join(' ').toLowerCase();
-      const status = item.status === 'quarantine'
-        ? 'quarantine'
-        : (item.haEnabled === false ? 'disabled' : 'active');
+      const status = getEntityStatus(item);
 
       return matchesTokenQuery(nameText, n)
         && matchesTokenQuery(category, c)
@@ -946,9 +1021,41 @@
         && (!s || status === s);
     }
 
+    function sortEntities(items, sortField) {
+      const statusOrder = {
+        active: 0,
+        disabled: 1,
+        quarantine: 2,
+      };
+
+      const rows = [...items];
+      rows.sort((a, b) => {
+        if (sortField === 'status') {
+          const diff = (statusOrder[getEntityStatus(a)] ?? 99) - (statusOrder[getEntityStatus(b)] ?? 99);
+          if (diff !== 0) return diff;
+        } else if (sortField === 'category') {
+          const diff = String(a.category || '').localeCompare(String(b.category || ''), undefined, { sensitivity: 'base' });
+          if (diff !== 0) return diff;
+        } else if (sortField === 'room') {
+          const diff = String(a.room || '').localeCompare(String(b.room || ''), undefined, { sensitivity: 'base' });
+          if (diff !== 0) return diff;
+        } else if (sortField === 'label') {
+          const diff = getEntityLabelSortValue(a).localeCompare(getEntityLabelSortValue(b), undefined, { sensitivity: 'base' });
+          if (diff !== 0) return diff;
+        }
+
+        const aName = String(a.alias || a.id || '');
+        const bName = String(b.alias || b.id || '');
+        return aName.localeCompare(bName, undefined, { sensitivity: 'base' });
+      });
+
+      return rows;
+    }
+
     function renderAutomations() {
       const body = byId('automations-body');
-      const rows = state.automations.filter(filterAutomation);
+      const filtered = state.automations.filter((item) => filterEntity(item, state.filters));
+      const rows = sortEntities(filtered, state.sorting.automations);
 
       body.innerHTML = rows.map((item) => {
         const isQuarantine = item.status === 'quarantine';
@@ -959,7 +1066,6 @@
         const category = item.category || '';
         const room = item.room || '';
         const labelsArray = Array.isArray(item.labels) ? item.labels : [];
-        const labelsText = normalizeLabels(labelsArray);
         const editId = item.editId || item.haUniqueId || '';
 
         return `
@@ -974,7 +1080,7 @@
             <td data-label="Category">
               <input data-field="category" data-id="${escapeHtml(item.id)}" value="${escapeHtml(category)}" placeholder="e.g. climate" />
               <div class="meta-tools">
-                <button data-action="filter-category" data-value="${escapeHtml(category)}" ${category ? '' : 'disabled'} title="Filter by this category.">Filter</button>
+                <button data-action="filter-category" data-filter-scope="automation" data-value="${escapeHtml(category)}" ${category ? '' : 'disabled'} title="Filter by this category.">Filter</button>
               </div>
             </td>
             <td data-label="Labels">
@@ -988,21 +1094,90 @@
                 <input data-label-input data-id="${escapeHtml(item.id)}" placeholder="type label + Enter" />
               </div>
               <div class="meta-tools">
-                ${labelsArray.map((label) => `<button data-action="filter-label" data-value="${escapeHtml(label)}" title="Filter by this label.">Filter: ${escapeHtml(label)}</button>`).join('')}
+                ${labelsArray.map((label) => `<button data-action="filter-label" data-filter-scope="automation" data-value="${escapeHtml(label)}" title="Filter by this label.">Filter: ${escapeHtml(label)}</button>`).join('')}
               </div>
             </td>
             <td data-label="Room">
               <input data-field="room" data-id="${escapeHtml(item.id)}" value="${escapeHtml(room)}" placeholder="e.g. kitchen" />
               <div class="meta-tools">
-                <button data-action="filter-room" data-value="${escapeHtml(room)}" ${room ? '' : 'disabled'} title="Filter by this room.">Filter</button>
+                <button data-action="filter-room" data-filter-scope="automation" data-value="${escapeHtml(room)}" ${room ? '' : 'disabled'} title="Filter by this room.">Filter</button>
               </div>
             </td>
             <td data-label="Actions">
               <div class="actions">
-                <button class="primary" data-action="save-meta" data-id="${escapeHtml(item.id)}" title="Save category, labels, and room metadata.">Save meta</button>
-                <button data-action="open-edit" data-id="${escapeHtml(item.id)}" data-edit-id="${escapeHtml(editId)}" title="Open Home Assistant automation edit page in a new tab.">Edit</button>
-                <button data-action="open-raw" data-id="${escapeHtml(item.id)}" title="Open YAML history for this automation.">History</button>
-                <button class="warn" data-action="quarantine" data-id="${escapeHtml(item.id)}" ${isQuarantine ? 'disabled' : ''} title="Move automation to quarantine and remove it from HA after confirmation.">Quarantine</button>
+                <button class="primary" data-action="save-meta" data-entity-type="automation" data-id="${escapeHtml(item.id)}" title="Save category, labels, and room metadata.">Save meta</button>
+                <button data-action="open-edit" data-entity-type="automation" data-id="${escapeHtml(item.id)}" data-edit-id="${escapeHtml(editId)}" title="Open Home Assistant automation edit page in a new tab.">Edit</button>
+                <button data-action="open-raw" data-entity-type="automation" data-id="${escapeHtml(item.id)}" title="Open YAML history for this automation.">History</button>
+                <button class="warn" data-action="quarantine" data-entity-type="automation" data-id="${escapeHtml(item.id)}" ${isQuarantine ? 'disabled' : ''} title="Move automation to quarantine and remove it from HA after confirmation.">Quarantine</button>
+                ${isQuarantine ? `<button class="danger" data-action="delete-quarantine" data-id="${escapeHtml(item.id)}" title="Permanently delete quarantine backup entry after confirmation.">Permanent delete</button>` : ''}
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderScripts() {
+      const body = byId('scripts-body');
+      if (!body) {
+        return;
+      }
+
+      const filtered = state.scripts.filter((item) => filterEntity(item, state.scriptFilters));
+      const rows = sortEntities(filtered, state.sorting.scripts);
+
+      body.innerHTML = rows.map((item) => {
+        const isQuarantine = item.status === 'quarantine';
+        const isDisabled = !isQuarantine && item.haEnabled === false;
+        const rowClass = isQuarantine ? 'quarantine' : '';
+        const statusClass = isQuarantine ? 'quarantine' : (isDisabled ? 'disabled' : 'active');
+        const statusText = isQuarantine ? 'quarantine' : (isDisabled ? 'disabled' : 'active');
+        const category = item.category || '';
+        const room = item.room || '';
+        const labelsArray = Array.isArray(item.labels) ? item.labels : [];
+        const editId = item.editId || item.haUniqueId || '';
+
+        return `
+          <tr class="${rowClass}">
+            <td data-label="Script">
+              <strong>${escapeHtml(item.alias || item.id)}</strong><br>
+              <small>${escapeHtml(item.id)}</small>
+            </td>
+            <td data-label="Status">
+              <span class="status ${statusClass}">${statusText}</span>
+            </td>
+            <td data-label="Category">
+              <input data-field="category" data-id="${escapeHtml(item.id)}" value="${escapeHtml(category)}" placeholder="e.g. utility" />
+              <div class="meta-tools">
+                <button data-action="filter-category" data-filter-scope="script" data-value="${escapeHtml(category)}" ${category ? '' : 'disabled'} title="Filter by this category.">Filter</button>
+              </div>
+            </td>
+            <td data-label="Labels">
+              <div class="labels-editor" data-label-editor data-id="${escapeHtml(item.id)}">
+                ${labelsArray.map((label) => `
+                  <span class="label-chip-edit" data-label-value="${escapeHtml(label)}">
+                    ${escapeHtml(label)}
+                    <button type="button" data-action="remove-label" data-id="${escapeHtml(item.id)}" data-value="${escapeHtml(label)}" title="Remove label">x</button>
+                  </span>
+                `).join('')}
+                <input data-label-input data-id="${escapeHtml(item.id)}" placeholder="type label + Enter" />
+              </div>
+              <div class="meta-tools">
+                ${labelsArray.map((label) => `<button data-action="filter-label" data-filter-scope="script" data-value="${escapeHtml(label)}" title="Filter by this label.">Filter: ${escapeHtml(label)}</button>`).join('')}
+              </div>
+            </td>
+            <td data-label="Room">
+              <input data-field="room" data-id="${escapeHtml(item.id)}" value="${escapeHtml(room)}" placeholder="e.g. office" />
+              <div class="meta-tools">
+                <button data-action="filter-room" data-filter-scope="script" data-value="${escapeHtml(room)}" ${room ? '' : 'disabled'} title="Filter by this room.">Filter</button>
+              </div>
+            </td>
+            <td data-label="Actions">
+              <div class="actions">
+                <button class="primary" data-action="save-meta" data-entity-type="script" data-id="${escapeHtml(item.id)}" title="Save category, labels, and room metadata.">Save meta</button>
+                <button data-action="open-edit" data-entity-type="script" data-id="${escapeHtml(item.id)}" data-edit-id="${escapeHtml(editId)}" title="Open Home Assistant script edit page in a new tab.">Edit</button>
+                <button data-action="open-raw" data-entity-type="script" data-id="${escapeHtml(item.id)}" title="Open YAML history for this script.">History</button>
+                <button class="warn" data-action="quarantine" data-entity-type="script" data-id="${escapeHtml(item.id)}" ${isQuarantine ? 'disabled' : ''} title="Move script to quarantine and remove it from HA after confirmation.">Quarantine</button>
                 ${isQuarantine ? `<button class="danger" data-action="delete-quarantine" data-id="${escapeHtml(item.id)}" title="Permanently delete quarantine backup entry after confirmation.">Permanent delete</button>` : ''}
               </div>
             </td>
@@ -1037,16 +1212,16 @@
               ${device.deviceName && device.deviceName !== device.deviceId ? `<br><small>${escapeHtml(device.deviceId)}</small>` : ''}
               ${Array.isArray(device.sourceDeviceIds) && device.sourceDeviceIds.length ? `<br><small>device_id: ${escapeHtml(device.sourceDeviceIds.join(', '))}</small>` : ''}
             </button>
-            <span class="chip">${device.automationIds.length} automations</span>
+            <span class="chip">${device.automationIds.length} entities</span>
           </div>
           <div class="device-links">
             ${device.automationIds.map((a) => `
-              <span class="device-automation">
-                <button data-action="open-edit" data-id="${escapeHtml(a.id)}" data-edit-id="${escapeHtml(a.editId || '')}" title="Open automation edit in new tab.">
-                  ${escapeHtml(a.alias || a.id)} (${escapeHtml(a.status === 'quarantine' ? 'quarantine' : (a.haEnabled === false ? 'disabled' : 'active'))})
+              <span class="device-automation ${a.entityType === 'script' ? 'script' : ''}">
+                <button data-action="open-edit" data-entity-type="${escapeHtml(a.entityType || 'automation')}" data-id="${escapeHtml(a.id)}" data-edit-id="${escapeHtml(a.editId || '')}" title="Open entity edit in new tab.">
+                  ${escapeHtml(a.alias || a.id)} (${escapeHtml(a.status === 'quarantine' ? 'quarantine' : (a.haEnabled === false ? 'disabled' : 'active'))}${a.entityType === 'script' ? ', script' : ''})
                 </button>
                 <button class="history" data-action="open-raw" data-id="${escapeHtml(a.id)}" title="Open raw configuration history.">History</button>
-                <button class="quarantine" data-action="quarantine" data-id="${escapeHtml(a.id)}" ${a.status === 'quarantine' ? 'disabled' : ''} title="Move automation to quarantine.">Quarantine</button>
+                <button class="quarantine" data-action="quarantine" data-entity-type="${escapeHtml(a.entityType || 'automation')}" data-id="${escapeHtml(a.id)}" ${a.status === 'quarantine' ? 'disabled' : ''} title="Move entity to quarantine.">Quarantine</button>
               </span>
             `).join('')}
           </div>
@@ -1056,13 +1231,15 @@
 
     function renderQuarantine() {
       const body = byId('quarantine-body');
-      const rows = state.automations.filter((item) => item.status === 'quarantine').filter(filterAutomation);
+      const rows = [...state.automations, ...state.scripts]
+        .filter((item) => item.status === 'quarantine')
+        .filter((item) => filterEntity(item, state.filters));
 
       body.innerHTML = rows.map((item) => `
         <tr class="quarantine">
-          <td data-label="Automation">
+          <td data-label="Entity">
             <strong>${escapeHtml(item.alias || item.id)}</strong><br>
-            <small>${escapeHtml(item.id)}</small>
+            <small>${escapeHtml(item.id)} (${escapeHtml(item.entityType || (String(item.id || '').startsWith('script.') ? 'script' : 'automation'))})</small>
           </td>
           <td data-label="Category">${escapeHtml(item.category || '')}</td>
           <td data-label="Labels">${escapeHtml(normalizeLabels(item.labels))}</td>
@@ -1078,15 +1255,16 @@
       `).join('');
 
       if (!rows.length) {
-        body.innerHTML = '<tr><td colspan="5">No quarantined automations.</td></tr>';
+        body.innerHTML = '<tr><td colspan="5">No quarantined entities.</td></tr>';
       }
     }
 
     function renderRawSelect() {
       const select = byId('raw-select');
-      const options = [...state.automations].sort((a, b) => (a.alias || a.id).localeCompare(b.alias || b.id));
+      const options = [...state.automations, ...state.scripts]
+        .sort((a, b) => (a.alias || a.id).localeCompare(b.alias || b.id));
       if (!options.length) {
-        select.innerHTML = '<option value="">No automations available</option>';
+        select.innerHTML = '<option value="">No entities available</option>';
         select.disabled = true;
         return;
       }
@@ -1171,7 +1349,7 @@
     async function saveRawConfiguration() {
       const id = byId('raw-select').value;
       if (!id) {
-        showToast('Select automation first.');
+        showToast('Select entity first.');
         return;
       }
 
@@ -1232,12 +1410,13 @@
       }
     }
 
-    async function saveMeta(id) {
+    async function saveMeta(id, entityType = 'automation') {
       const category = document.querySelector(`input[data-id="${id}"][data-field="category"]`)?.value || '';
       const labels = readLabelsFromEditor(id);
       const room = document.querySelector(`input[data-id="${id}"][data-field="room"]`)?.value || '';
+      const domain = entityType === 'script' ? 'scripts' : 'automations';
 
-      const result = await api(`/api/automations/${encodeURIComponent(id)}/meta`, {
+      const result = await api(`/api/${domain}/${encodeURIComponent(id)}/meta`, {
         method: 'POST',
         body: JSON.stringify({ category, labels, room, applyToHa: true }),
       });
@@ -1252,11 +1431,12 @@
       await refresh();
     }
 
-    async function quarantine(id) {
+    async function quarantine(id, entityType = 'automation') {
       const ok = window.confirm(`Remove ${id} from Home Assistant and keep it in quarantine backup?`);
       if (!ok) return;
+      const domain = entityType === 'script' ? 'scripts' : 'automations';
 
-      await api(`/api/automations/${encodeURIComponent(id)}/quarantine`, {
+      await api(`/api/${domain}/${encodeURIComponent(id)}/quarantine`, {
         method: 'POST',
         body: JSON.stringify({ confirmed: true }),
       });
@@ -1349,13 +1529,14 @@
       const action = target.dataset.action;
       const id = target.dataset.id;
       const editId = target.dataset.editId;
+      const entityType = target.dataset.entityType || (String(id || '').startsWith('script.') ? 'script' : 'automation');
 
       const run = async () => {
-        if (action === 'open-edit') openAutomationEditTab(editId, id);
+        if (action === 'open-edit') openEntityEditTab(entityType, editId, id);
         if (action === 'open-device') openDeviceTab(target.dataset.deviceId || '');
         if (action === 'open-raw') await openRawForAutomation(id);
-        if (action === 'save-meta') await saveMeta(id);
-        if (action === 'quarantine') await quarantine(id);
+        if (action === 'save-meta') await saveMeta(id, entityType);
+        if (action === 'quarantine') await quarantine(id, entityType);
         if (action === 'restore') await restore(id);
         if (action === 'delete-quarantine') await deleteQuarantine(id);
         if (action === 'remove-label') {
@@ -1367,9 +1548,9 @@
             renderLabelsInEditor(editor, remaining);
           }
         }
-        if (action === 'filter-category') applyFilter('category', target.dataset.value || '');
-        if (action === 'filter-label') applyFilter('label', target.dataset.value || '');
-        if (action === 'filter-room') applyFilter('room', target.dataset.value || '');
+        if (action === 'filter-category') applyFilter(target.dataset.filterScope || entityType, 'category', target.dataset.value || '');
+        if (action === 'filter-label') applyFilter(target.dataset.filterScope || entityType, 'label', target.dataset.value || '');
+        if (action === 'filter-room') applyFilter(target.dataset.filterScope || entityType, 'room', target.dataset.value || '');
         if (action === 'raw-load-version') await loadRawHistoryVersion(id, target.dataset.commit);
       };
 
@@ -1413,6 +1594,36 @@
         input.addEventListener('input', onChange);
         input.addEventListener('change', onChange);
       });
+
+      const automationSort = byId('f-sort');
+      automationSort.addEventListener('input', (event) => {
+        state.sorting.automations = event.target.value || 'status';
+        renderAutomations();
+      });
+      automationSort.addEventListener('change', (event) => {
+        state.sorting.automations = event.target.value || 'status';
+        renderAutomations();
+      });
+
+      ['name', 'category', 'label', 'room', 'status'].forEach((key) => {
+        const input = byId(`sf-${key}`);
+        const onChange = (event) => {
+          state.scriptFilters[key] = event.target.value;
+          renderScripts();
+        };
+        input.addEventListener('input', onChange);
+        input.addEventListener('change', onChange);
+      });
+
+      const scriptSort = byId('sf-sort');
+      scriptSort.addEventListener('input', (event) => {
+        state.sorting.scripts = event.target.value || 'status';
+        renderScripts();
+      });
+      scriptSort.addEventListener('change', (event) => {
+        state.sorting.scripts = event.target.value || 'status';
+        renderScripts();
+      });
     }
 
     function setupRawEditor() {
@@ -1435,32 +1646,40 @@
     }
 
     function setupLabelEditors() {
-      byId('automations-body').addEventListener('keydown', (event) => {
-        const input = event.target.closest('input[data-label-input]');
-        if (!input) return;
+      const attach = (containerId) => {
+        const container = byId(containerId);
+        if (!container) return;
 
-        if (event.key === 'Enter' || event.key === ',') {
-          event.preventDefault();
-          commitLabelInput(input);
-          return;
-        }
+        container.addEventListener('keydown', (event) => {
+          const input = event.target.closest('input[data-label-input]');
+          if (!input) return;
 
-        if (event.key === 'Backspace' && !input.value) {
-          const editor = input.closest('.labels-editor');
-          if (!editor) return;
-          const chips = [...editor.querySelectorAll('.label-chip-edit')];
-          const last = chips[chips.length - 1];
-          if (last) {
-            last.remove();
+          if (event.key === 'Enter' || event.key === ',') {
+            event.preventDefault();
+            commitLabelInput(input);
+            return;
           }
-        }
-      });
 
-      byId('automations-body').addEventListener('focusout', (event) => {
-        const input = event.target.closest('input[data-label-input]');
-        if (!input) return;
-        commitLabelInput(input);
-      });
+          if (event.key === 'Backspace' && !input.value) {
+            const editor = input.closest('.labels-editor');
+            if (!editor) return;
+            const chips = [...editor.querySelectorAll('.label-chip-edit')];
+            const last = chips[chips.length - 1];
+            if (last) {
+              last.remove();
+            }
+          }
+        });
+
+        container.addEventListener('focusout', (event) => {
+          const input = event.target.closest('input[data-label-input]');
+          if (!input) return;
+          commitLabelInput(input);
+        });
+      };
+
+      attach('automations-body');
+      attach('scripts-body');
     }
 
     byId('btn-import').addEventListener('click', runImport);
@@ -1468,6 +1687,7 @@
     byId('btn-push').addEventListener('click', runPush);
 
     byId('automations-body').addEventListener('click', onTableAction);
+    byId('scripts-body').addEventListener('click', onTableAction);
     byId('devices-list').addEventListener('click', onTableAction);
     byId('quarantine-body').addEventListener('click', onTableAction);
     byId('raw-history').addEventListener('click', onTableAction);

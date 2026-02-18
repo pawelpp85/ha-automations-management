@@ -23,12 +23,24 @@ class FakeHaClient {
     return this.items;
   }
 
+  async listScripts() {
+    return [];
+  }
+
   async getAutomationConfig(id) {
     const found = this.items.find((item) => (item.id || item.entity_id) === id);
     return found?.raw_config || null;
   }
 
+  async getScriptConfig(_id) {
+    return null;
+  }
+
   async deleteAutomation(id) {
+    this.deleted.push(id);
+  }
+
+  async deleteScript(id) {
     this.deleted.push(id);
   }
 
@@ -36,8 +48,16 @@ class FakeHaClient {
     this.upserted.push({ id, config });
   }
 
+  async upsertScript(id, config) {
+    this.upserted.push({ id, config });
+  }
+
   async automationExists(entityId) {
     return this.items.some((item) => (item.entity_id || item.id) === entityId);
+  }
+
+  async scriptExists(_entityId) {
+    return false;
   }
 
   async resolveDeviceReference(reference) {
@@ -329,6 +349,46 @@ test('buildDeviceView sorts devices by automation count descending', async () =>
   assert.ok(list.length >= 2);
   assert.equal(list[0].deviceId, 'sensor.dev_a');
   assert.equal(list[0].automationIds.length, 2);
+});
+
+test('buildDeviceView groups multiple entity references under one device_id entry', async () => {
+  const storeDir = tempDir('ha-am-store-');
+  const repoDir = tempDir('ha-am-git-');
+  const store = new StoreService(storeDir);
+  const haClient = new FakeHaClient([
+    {
+      id: 'automation.same_device',
+      entity_id: 'automation.same_device',
+      alias: 'Same device',
+      raw_config: {
+        alias: 'Same device',
+        trigger: [{ platform: 'state', entity_id: 'sensor.bed_dimmer_pawel_battery' }],
+        condition: [],
+        action: [{ service: 'logbook.log', data: { name: 'x' }, target: { entity_id: 'sensor.bed_dimmer_pawel_last_seen' } }],
+      },
+    },
+  ]);
+  haClient.resolveDeviceReference = async (reference) => {
+    const value = String(reference || '').trim();
+    if (value === 'sensor.bed_dimmer_pawel_battery' || value === 'sensor.bed_dimmer_pawel_last_seen') {
+      return [{
+        key: 'e358247b10d87c834b1d09391ae9867f',
+        display: 'bed dimmer Pawel',
+        sourceDeviceId: 'e358247b10d87c834b1d09391ae9867f',
+      }];
+    }
+    return [{ key: value, display: value }];
+  };
+  const gitBackup = new FakeGitBackup(repoDir);
+  const service = new AutomationService({ store, haClient, gitBackup });
+  await service.importFromHa({ automaticCommit: false });
+
+  const devices = await service.buildDeviceView();
+  const grouped = devices.filter((entry) => entry.deviceId === 'e358247b10d87c834b1d09391ae9867f');
+  assert.equal(grouped.length, 1);
+  assert.equal(grouped[0].deviceName, 'bed dimmer Pawel');
+  assert.equal(grouped[0].automationIds.length, 1);
+  assert.equal(grouped[0].automationIds[0].id, 'automation.same_device');
 });
 
 test('validateRawYaml reports syntax errors and structural warnings', () => {

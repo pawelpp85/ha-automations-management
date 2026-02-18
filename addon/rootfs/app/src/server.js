@@ -62,7 +62,7 @@ app.use(express.static(path.join(__dirname, '../public')));
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
-    version: '1.0.0b19',
+    version: '1.0.0b20',
     startedAt: process.uptime(),
     startup: startupState,
   });
@@ -70,7 +70,7 @@ app.get('/api/health', (_req, res) => {
 
 app.get('/api/config', (_req, res) => {
   res.json({
-    version: '1.0.0b19',
+    version: '1.0.0b20',
     syncIntervalSeconds: options.sync_interval_seconds,
     remoteEnabled: options.remote_enabled,
   });
@@ -82,6 +82,15 @@ app.get('/api/automations', (_req, res) => {
 
   res.json({
     data: service.listAutomations(),
+  });
+});
+
+app.get('/api/scripts', (_req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
+  res.json({
+    data: service.listScripts(),
   });
 });
 
@@ -214,6 +223,18 @@ app.post('/api/automations/:id/meta', async (req, res) => {
   }
 });
 
+app.post('/api/scripts/:id/meta', async (req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
+  try {
+    const updated = await service.updateMetadata(req.params.id, req.body || {});
+    res.json({ data: updated });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 app.post('/api/automations/:id/quarantine', async (req, res) => {
   const service = getAutomationServiceOrReply(res);
   if (!service) return;
@@ -229,12 +250,27 @@ app.post('/api/automations/:id/quarantine', async (req, res) => {
   }
 });
 
+app.post('/api/scripts/:id/quarantine', async (req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
+  try {
+    const updated = await service.quarantineScript(req.params.id, {
+      confirmed: Boolean(req.body?.confirmed),
+    });
+
+    res.json({ data: updated });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 app.post('/api/quarantine/:id/restore', async (req, res) => {
   const service = getAutomationServiceOrReply(res);
   if (!service) return;
 
   try {
-    const updated = await service.restoreAutomation(req.params.id);
+    const updated = await service.restoreEntity(req.params.id);
     res.json({ data: updated });
   } catch (error) {
     res.status(400).json({ error: error.message });

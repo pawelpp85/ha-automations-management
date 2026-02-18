@@ -20,7 +20,20 @@ class StoreService {
     }
 
     try {
-      return JSON.parse(fs.readFileSync(this.statePath, 'utf8'));
+      const parsed = JSON.parse(fs.readFileSync(this.statePath, 'utf8'));
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error('State file has invalid format.');
+      }
+      if (!parsed.automations || typeof parsed.automations !== 'object') {
+        parsed.automations = {};
+      }
+      if (!Array.isArray(parsed.warnings)) {
+        parsed.warnings = [];
+      }
+      if (!Object.prototype.hasOwnProperty.call(parsed, 'lastSyncAt')) {
+        parsed.lastSyncAt = null;
+      }
+      return parsed;
     } catch (error) {
       console.error('Failed to parse state file:', error.message);
       return {
@@ -36,12 +49,21 @@ class StoreService {
   }
 
   getAutomation(id) {
-    return this.state.automations[id] || null;
+    const record = this.state.automations[id] || null;
+    if (!record) {
+      return null;
+    }
+
+    return {
+      entityType: 'automation',
+      ...record,
+    };
   }
 
   upsertAutomation(id, patch) {
     const current = this.state.automations[id] || {
       id,
+      entityType: 'automation',
       category: '',
       labels: [],
       room: '',
@@ -51,6 +73,7 @@ class StoreService {
     this.state.automations[id] = {
       ...current,
       ...patch,
+      entityType: patch?.entityType || current.entityType || 'automation',
       id,
     };
 
@@ -76,7 +99,15 @@ class StoreService {
   }
 
   listAutomations() {
-    return Object.values(this.state.automations);
+    return Object.values(this.state.automations).map((record) => ({
+      entityType: 'automation',
+      ...record,
+    }));
+  }
+
+  listByType(entityType) {
+    const wanted = String(entityType || 'automation');
+    return this.listAutomations().filter((record) => (record.entityType || 'automation') === wanted);
   }
 
   setLastSync(timestamp) {
