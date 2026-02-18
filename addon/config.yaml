@@ -1,5 +1,5 @@
 name: "HA Automations Management"
-version: "1.0.0b6"
+version: "1.0.0b7"
 slug: "ha_automations_management"
 description: "Organize, quarantine, and back up Home Assistant automations with local Git history"
 url: "https://github.com/pawelpp85/ha-automations-management"
@@ -19,6 +19,7 @@ hassio_api: true
 panel_icon: mdi:playlist-edit
 panel_title: Automation Manager
 map:
+  - config:rw
   - addon_config:rw
   - backup:rw
 options:

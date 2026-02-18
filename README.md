@@ -1,6 +1,6 @@
 # HA Automations Management Add-on
 
-Version: `1.0.0b6`
+Version: `1.0.0b7`
 
 This repository contains the project definition for a Home Assistant add-on focused on automation organization, quarantine backup, and Git-based history.
 
@@ -35,7 +35,7 @@ Use this URL in Home Assistant Add-on Store -> Repositories:
 
 ## Current Status
 
-Backend and frontend are available in beta iteration `1.0.0b6`, including Automations, Devices, and Quarantine views.
+Backend and frontend are available in beta iteration `1.0.0b7`, including Automations, Devices, and Quarantine views.
 
 ## Run Add-on UI Locally
 

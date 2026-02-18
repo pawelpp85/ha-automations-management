@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.0b7 - 2026-02-18
+
+- Reworked Home Assistant communication using websocket-first strategy (`/api/websocket`) modeled after `z2m_proxies_checkout`.
+- Added fallback chain for automation import: websocket -> REST config endpoints -> `/api/states` + `/config/automations.yaml`.
+- Removed repetitive per-automation 404 log spam when config endpoints are unavailable.
+- Forced container entrypoint through `bash` in Docker image to avoid shebang-related `s6-envdir` failures.
+- Mounted `config:rw` in add-on manifest to allow YAML fallback reads from `/config/automations.yaml`.
+- Initialized local backup Git repository with default branch `main` to remove `master` hint noise.
+- Bumped add-on metadata version to `1.0.0b7`.
+
 ## 1.0.0b6 - 2026-02-18
 
 - Fixed local container startup: entrypoint now works both in HA (`with-contenv`) and plain Docker.

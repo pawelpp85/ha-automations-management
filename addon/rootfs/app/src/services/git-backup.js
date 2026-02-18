@@ -33,7 +33,16 @@ class GitBackupService {
     ensureDir(this.metadataDir);
 
     if (!fs.existsSync(path.join(this.repoDir, '.git'))) {
-      execFileSync('git', ['init'], { cwd: this.repoDir });
+      try {
+        execFileSync('git', ['init', '-b', 'main'], { cwd: this.repoDir });
+      } catch (_error) {
+        execFileSync('git', ['init'], { cwd: this.repoDir });
+        try {
+          this.git(['branch', '-M', 'main']);
+        } catch (_renameError) {
+          // Ignore if current git version cannot rename branch in this state.
+        }
+      }
     }
 
     this.git(['config', 'user.name', this.options.git_user_name]);

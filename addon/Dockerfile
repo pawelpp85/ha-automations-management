@@ -13,4 +13,4 @@ COPY rootfs /
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 8099
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/bin/bash", "/entrypoint.sh"]
