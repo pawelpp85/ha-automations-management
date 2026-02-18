@@ -104,6 +104,27 @@ test('GitBackupService getDiff returns unified patch with line changes', () => {
   assert.ok(diff.includes('+alias: Diff view'));
 });
 
+test('GitBackupService getLastCommit returns latest commit content', () => {
+  const repoDir = tempDir('ha-am-repo-last-commit-');
+  const backup = new GitBackupService(options(), repoDir);
+
+  assert.equal(backup.hasCommits(), false);
+  assert.equal(backup.getLastCommit(), '');
+
+  backup.writeYaml('active', 'automation.last_commit', {
+    alias: 'Last commit',
+    trigger: [],
+    action: [],
+  });
+  backup.commit('test: last commit content');
+
+  assert.equal(backup.hasCommits(), true);
+  const lastCommit = backup.getLastCommit();
+  assert.equal(typeof lastCommit, 'string');
+  assert.ok(lastCommit.includes('test: last commit content'));
+  assert.ok(lastCommit.includes('automation.last_commit.yaml'));
+});
+
 test('GitBackupService writes scripts under scripts directory', () => {
   const repoDir = tempDir('ha-am-repo-scripts-');
   const backup = new GitBackupService(options(), repoDir);

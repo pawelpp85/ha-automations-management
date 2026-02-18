@@ -62,7 +62,7 @@ app.use(express.static(path.join(__dirname, '../public')));
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
-    version: '1.0.0b27',
+    version: '1.0.0b28',
     startedAt: process.uptime(),
     startup: startupState,
   });
@@ -70,7 +70,7 @@ app.get('/api/health', (_req, res) => {
 
 app.get('/api/config', (_req, res) => {
   res.json({
-    version: '1.0.0b27',
+    version: '1.0.0b28',
     syncIntervalSeconds: options.sync_interval_seconds,
     remoteEnabled: options.remote_enabled,
   });
@@ -322,6 +322,18 @@ app.get('/api/git/diff', (_req, res) => {
 
   try {
     const result = service.gitDiff();
+    res.json({ data: result });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/git/last-commit', (_req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
+  try {
+    const result = service.gitLastCommit();
     res.json({ data: result });
   } catch (error) {
     res.status(400).json({ error: error.message });

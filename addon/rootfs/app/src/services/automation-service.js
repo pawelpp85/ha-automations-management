@@ -951,6 +951,9 @@ class AutomationService {
   gitStatus() {
     return {
       hasChanges: this.gitBackup.hasChanges(),
+      hasCommits: typeof this.gitBackup.hasCommits === 'function'
+        ? this.gitBackup.hasCommits()
+        : false,
       hasPendingPush: typeof this.gitBackup.hasPendingPush === 'function'
         ? this.gitBackup.hasPendingPush()
         : false,
@@ -961,6 +964,14 @@ class AutomationService {
     return {
       diff: typeof this.gitBackup.getDiff === 'function'
         ? this.gitBackup.getDiff()
+        : '',
+    };
+  }
+
+  gitLastCommit() {
+    return {
+      commit: typeof this.gitBackup.getLastCommit === 'function'
+        ? this.gitBackup.getLastCommit()
         : '',
     };
   }

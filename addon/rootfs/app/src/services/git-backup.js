@@ -287,6 +287,15 @@ class GitBackupService {
     return status.length > 0;
   }
 
+  hasCommits() {
+    try {
+      this.git(['rev-parse', '--verify', 'HEAD']);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
   hasPendingPush() {
     if (!this.options.remote_enabled || !this.options.remote_url) {
       return false;
@@ -357,6 +366,14 @@ class GitBackupService {
     }
 
     return String(output || '').trimEnd();
+  }
+
+  getLastCommit() {
+    if (!this.hasCommits()) {
+      return '';
+    }
+
+    return this.gitRawAllowExitCodes(['show', '--no-color', '--patch', '--stat', 'HEAD'], [0, 1]).trimEnd();
   }
 
   commit(message) {

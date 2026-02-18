@@ -760,7 +760,7 @@
   <div id="diff-modal" class="diff-modal" aria-hidden="true">
     <div class="diff-panel">
       <div class="diff-head">
-        <strong>Pending Git Changes</strong>
+        <strong id="diff-title">Pending Git Changes</strong>
         <button id="btn-close-diff">Close</button>
       </div>
       <pre id="diff-content" class="diff-content"></pre>
@@ -779,6 +779,7 @@
       metaInFlight: new Set(),
       metaSaveTimers: new Map(),
       gitHasChanges: false,
+      gitHasCommits: false,
       gitHasPendingPush: false,
       filters: { name: '', category: '', label: '', room: '', status: '', device: '' },
       scriptFilters: { name: '', category: '', label: '', room: '' },
@@ -834,7 +835,26 @@
       byId('btn-import').disabled = isBusy;
       byId('btn-push').disabled = isBusy || !state.gitHasPendingPush;
       byId('btn-commit').disabled = isBusy || !state.gitHasChanges;
-      byId('btn-view-changes').disabled = isBusy || !state.gitHasChanges;
+      updateGitPreviewButton();
+    }
+
+    function updateGitPreviewButton() {
+      const button = byId('btn-view-changes');
+      const isBusy = state.inFlight.size > 0;
+      const canShowLastCommit = !state.gitHasChanges && state.gitHasCommits;
+
+      if (state.gitHasChanges) {
+        button.textContent = 'View changes';
+        button.title = 'View pending local repository changes before commit.';
+        button.disabled = isBusy;
+        return;
+      }
+
+      button.textContent = 'View last commit';
+      button.title = canShowLastCommit
+        ? 'View the content of the latest commit in YAML repository.'
+        : 'No commits available yet.';
+      button.disabled = isBusy || !canShowLastCommit;
     }
 
     function resolveApiUrl(url) {
@@ -1145,7 +1165,7 @@
         api('/api/scripts'),
         api('/api/devices'),
         api('/api/warnings'),
-        api('/api/git/status').catch(() => ({ data: { hasChanges: false, hasPendingPush: false } })),
+        api('/api/git/status').catch(() => ({ data: { hasChanges: false, hasCommits: false, hasPendingPush: false } })),
       ]);
 
       state.automations = automations.data || [];
@@ -1153,6 +1173,7 @@
       state.devices = devices.data || [];
       state.warnings = warnings.data || [];
       state.gitHasChanges = Boolean(gitStatus?.data?.hasChanges);
+      state.gitHasCommits = Boolean(gitStatus?.data?.hasCommits);
       state.gitHasPendingPush = Boolean(gitStatus?.data?.hasPendingPush);
       if (state.gitHasChanges) {
         byId('repo-status').textContent = 'Pending changes to commit';
@@ -1163,7 +1184,7 @@
       }
       byId('btn-commit').disabled = state.inFlight.size > 0 || !state.gitHasChanges;
       byId('btn-push').disabled = state.inFlight.size > 0 || !state.gitHasPendingPush;
-      byId('btn-view-changes').disabled = state.inFlight.size > 0 || !state.gitHasChanges;
+      updateGitPreviewButton();
 
       renderFilterSuggestions();
       renderWarnings();
@@ -1218,11 +1239,11 @@
       modal.setAttribute('aria-hidden', 'true');
     }
 
-    function renderDiff(diffText) {
+    function renderDiff(diffText, emptyMessage = 'No pending local changes.') {
       const content = byId('diff-content');
       const normalized = String(diffText || '');
       if (!normalized.trim()) {
-        content.innerHTML = '<div class="diff-line">No pending local changes.</div>';
+        content.innerHTML = `<div class="diff-line">${escapeHtml(emptyMessage)}</div>`;
         return;
       }
 
@@ -1253,8 +1274,16 @@
 
     async function openDiffView() {
       try {
-        const result = await api('/api/git/diff');
-        renderDiff(result?.data?.diff || '');
+        const title = byId('diff-title');
+        if (state.gitHasChanges) {
+          const result = await api('/api/git/diff');
+          title.textContent = 'Pending Git Changes';
+          renderDiff(result?.data?.diff || '', 'No pending local changes.');
+        } else {
+          const result = await api('/api/git/last-commit');
+          title.textContent = 'Last Commit';
+          renderDiff(result?.data?.commit || '', 'No commits available yet.');
+        }
         const modal = byId('diff-modal');
         modal.classList.add('visible');
         modal.setAttribute('aria-hidden', 'false');
