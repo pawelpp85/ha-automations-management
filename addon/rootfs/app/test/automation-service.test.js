@@ -583,3 +583,67 @@ test('updateMetadata applies metadata to HA by default and stores it locally', a
   assert.equal(haClient.metadataUpdates.length, 1);
   assert.equal(haClient.metadataUpdates[0].entityId, 'automation.meta_test');
 });
+
+test('restoreEntity keeps automation in quarantine when HA verification fails', async () => {
+  const storeDir = tempDir('ha-am-store-');
+  const repoDir = tempDir('ha-am-git-');
+  const store = new StoreService(storeDir);
+  const haClient = new FakeHaClient([]);
+  const gitBackup = new FakeGitBackup(repoDir);
+
+  store.upsertAutomation('automation.suzi_started_cleaning', {
+    id: 'automation.suzi_started_cleaning',
+    alias: 'Suzi started cleaning',
+    status: 'quarantine',
+    entityType: 'automation',
+  });
+  gitBackup.writeYaml('quarantine', 'automation.suzi_started_cleaning', {
+    alias: 'Suzi started cleaning',
+    trigger: [],
+    condition: [],
+    action: [],
+  });
+
+  haClient.automationExists = async () => false;
+
+  const service = new AutomationService({ store, haClient, gitBackup });
+  await assert.rejects(
+    async () => service.restoreAutomation('automation.suzi_started_cleaning'),
+    /Restore verification failed/
+  );
+
+  const updated = store.getAutomation('automation.suzi_started_cleaning');
+  assert.equal(updated.status, 'quarantine');
+  assert.equal(gitBackup.fileExists('quarantine', 'automation.suzi_started_cleaning'), true);
+  assert.equal(gitBackup.fileExists('active', 'automation.suzi_started_cleaning'), false);
+});
+
+test('restoreEntity moves automation to active when HA verification succeeds', async () => {
+  const storeDir = tempDir('ha-am-store-');
+  const repoDir = tempDir('ha-am-git-');
+  const store = new StoreService(storeDir);
+  const haClient = new FakeHaClient([]);
+  const gitBackup = new FakeGitBackup(repoDir);
+
+  store.upsertAutomation('automation.suzi_started_cleaning', {
+    id: 'automation.suzi_started_cleaning',
+    alias: 'Suzi started cleaning',
+    status: 'quarantine',
+    entityType: 'automation',
+  });
+  gitBackup.writeYaml('quarantine', 'automation.suzi_started_cleaning', {
+    alias: 'Suzi started cleaning',
+    trigger: [],
+    condition: [],
+    action: [],
+  });
+
+  haClient.automationExists = async (entityId) => entityId === 'automation.suzi_started_cleaning';
+
+  const service = new AutomationService({ store, haClient, gitBackup });
+  const restored = await service.restoreAutomation('automation.suzi_started_cleaning');
+
+  assert.equal(restored.status, 'active');
+  assert.equal(gitBackup.fileExists('quarantine', 'automation.suzi_started_cleaning'), false);
+  assert.equal(gitBackup.fileExists('active', 'automation.suzi_started_cleaning'), true);
+});

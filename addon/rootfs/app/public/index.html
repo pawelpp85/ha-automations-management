@@ -524,6 +524,12 @@
       display: block;
     }
 
+    .toast.error {
+      border-color: rgba(216, 106, 115, 0.72);
+      background: linear-gradient(180deg, rgba(98, 34, 42, 0.95), rgba(61, 20, 27, 0.96));
+      color: #ffe7ea;
+    }
+
     .diff-modal {
       position: fixed;
       inset: 0;
@@ -808,13 +814,18 @@
         .replace(/'/g, '&#39;');
     }
 
-    function showToast(message, timeout = 3600) {
+    function showToast(message, timeout = 3600, type = 'info') {
       const toast = byId('toast');
       const minDuration = 15000;
       const duration = Math.max(minDuration, Number(timeout || 0));
+      const variant = type === 'error' ? 'error' : 'info';
 
       window.clearTimeout(showToast.timer);
       toast.textContent = message;
+      toast.classList.remove('error');
+      if (variant === 'error') {
+        toast.classList.add('error');
+      }
       toast.classList.add('visible');
       toast.dataset.remaining = String(duration);
       toast.dataset.lastStartAt = String(Date.now());
@@ -2046,7 +2057,7 @@
         if (action === 'raw-load-version') await loadRawHistoryVersion(id, target.dataset.commit);
       };
 
-      run().catch((error) => showToast(error.message));
+      run().catch((error) => showToast(error.message, 3600, 'error'));
     }
 
     function onWarningAction(event) {
@@ -2065,7 +2076,7 @@
         }
       };
 
-      run().catch((error) => showToast(error.message));
+      run().catch((error) => showToast(error.message, 3600, 'error'));
     }
 
     function setupTabs() {

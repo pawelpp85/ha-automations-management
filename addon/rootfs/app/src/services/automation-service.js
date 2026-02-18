@@ -771,6 +771,35 @@ class AutomationService {
       await this.haClient.upsertAutomation(id, parsed);
     }
 
+    const existenceCandidates = [...new Set([
+      normalizeAutomationId(record.entityId),
+      normalizeAutomationId(record.id),
+      normalizeAutomationId(id),
+    ].filter(Boolean))];
+
+    let restoredInHa = true;
+    if (entityType === 'script' && typeof this.haClient?.scriptExists === 'function') {
+      restoredInHa = false;
+      for (const candidate of existenceCandidates) {
+        if (await this.haClient.scriptExists(candidate)) {
+          restoredInHa = true;
+          break;
+        }
+      }
+    } else if (entityType === 'automation' && typeof this.haClient?.automationExists === 'function') {
+      restoredInHa = false;
+      for (const candidate of existenceCandidates) {
+        if (await this.haClient.automationExists(candidate)) {
+          restoredInHa = true;
+          break;
+        }
+      }
+    }
+
+    if (!restoredInHa) {
+      throw new Error(`Restore verification failed: ${id} is still not present in Home Assistant.`);
+    }
+
     this.gitBackup.moveToActive(id);
     const updated = this.store.upsertAutomation(id, {
       status: 'active',
