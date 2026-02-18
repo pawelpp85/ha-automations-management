@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0b9 - 2026-02-18
+
+- Fixed ingress UI API path resolution (no more frontend `404` from Home Assistant root `/api/*` routes).
+- Unified automation identity to `entity_id` and added legacy ID migration during import.
+- Added cleanup of legacy quarantine entries created by older ID mapping.
+- Added add-on icon asset `addon/icon.png` and linked it in `addon/config.yaml`.
+- Bumped add-on metadata version to `1.0.0b9`.
+
 ## 1.0.0b8 - 2026-02-18
 
 - Added log time prefix (`HH:MM:SS.mmm`, no date) for backend logs.

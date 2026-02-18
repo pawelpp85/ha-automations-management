@@ -231,11 +231,15 @@ class HaClient {
           }
         }
 
-        const automationId = entry.unique_id || entry.entity_id;
+        const automationId = entry.entity_id;
+        const haUniqueId = entry.unique_id || '';
         const alias = config?.alias || entry.original_name || entry.entity_id;
 
         if (config) {
           this.cachedConfigs.set(automationId, config);
+          if (haUniqueId) {
+            this.cachedConfigs.set(haUniqueId, config);
+          }
           this.entityIdByAutomationId.set(automationId, entry.entity_id);
         }
 
@@ -243,6 +247,7 @@ class HaClient {
           id: automationId,
           alias,
           entity_id: entry.entity_id,
+          ha_unique_id: haUniqueId,
           raw_config: config || {
             alias,
             trigger: [],
@@ -305,6 +310,7 @@ class HaClient {
         id: entityId,
         alias,
         entity_id: entityId,
+        ha_unique_id: '',
         raw_config: rawConfig,
       };
     });
@@ -335,10 +341,12 @@ class HaClient {
         const list = Array.isArray(data) ? data : [];
 
         for (const entry of list) {
-          const id = entry.id || entry.entity_id;
+          const rawId = entry.id || entry.entity_id;
+          const id = entry.entity_id || (String(rawId || '').startsWith('automation.') ? rawId : `automation.${rawId}`);
           if (id) {
             this.cachedConfigs.set(id, entry.raw_config || entry);
-            this.entityIdByAutomationId.set(id, entry.entity_id || id);
+            const entityId = entry.entity_id || id;
+            this.entityIdByAutomationId.set(id, entityId);
           }
         }
 

@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const fs = require('fs');
 
 function extractDeviceRefs(node, collector = new Set()) {
   if (Array.isArray(node)) {
@@ -41,19 +42,49 @@ class AutomationService {
     let importedCount = 0;
     let failedCount = 0;
     let autoQuarantinedCount = 0;
+    let migratedCount = 0;
+    let cleanedLegacyQuarantineCount = 0;
 
     for (const automation of automations) {
-      const automationId = automation.id || automation.entity_id;
+      const automationId = automation.entity_id || automation.id;
       if (!automationId) {
         continue;
       }
 
       try {
+        const legacyIds = [
+          automation.id,
+          automation.ha_unique_id,
+        ].filter((value) => value && value !== automationId);
+
+        let existing = this.store.getAutomation(automationId);
+        for (const legacyId of legacyIds) {
+          const legacy = this.store.getAutomation(legacyId);
+          if (!legacy) {
+            continue;
+          }
+
+          if (!existing) {
+            existing = legacy;
+            migratedCount += 1;
+          }
+
+          if (legacy.status === 'quarantine') {
+            this.gitBackup.deleteQuarantine(legacyId);
+            cleanedLegacyQuarantineCount += 1;
+          } else {
+            const legacyActivePath = this.gitBackup.yamlPath('active', legacyId);
+            if (fs.existsSync(legacyActivePath)) {
+              fs.unlinkSync(legacyActivePath);
+            }
+          }
+          this.store.deleteAutomation(legacyId);
+        }
+
         seenIds.add(automationId);
 
         const config = (await this.haClient.getAutomationConfig(automationId)) || automation.raw_config || automation;
         const yamlHash = this.buildYamlHash(config);
-        const existing = this.store.getAutomation(automationId);
         const previouslyMissing = existing && existing.status === 'quarantine' && existing.autoQuarantined;
 
         this.gitBackup.writeYaml('active', automationId, config);
@@ -66,6 +97,7 @@ class AutomationService {
           lastSeenInHa: new Date().toISOString(),
           status: 'active',
           autoQuarantined: false,
+          haUniqueId: automation.ha_unique_id || existing?.haUniqueId || '',
           category: existing?.category || '',
           labels: existing?.labels || [],
           room: existing?.room || '',
@@ -101,7 +133,7 @@ class AutomationService {
     let autoCommit = null;
     if (automaticCommit) {
       autoCommit = this.gitBackup.commit(
-        `chore(sync): import changed=${importedCount}, quarantined=${autoQuarantinedCount}, failed=${failedCount}`
+        `chore(sync): import changed=${importedCount}, quarantined=${autoQuarantinedCount}, failed=${failedCount}, migrated=${migratedCount}`
       );
     }
 
@@ -110,7 +142,7 @@ class AutomationService {
     const quarantineCount = tracked.filter((entry) => entry.status === 'quarantine').length;
 
     console.log(
-      `Import summary: discovered=${automations.length}, changed=${importedCount}, failed=${failedCount}, active=${activeCount}, quarantine=${quarantineCount}`
+      `Import summary: discovered=${automations.length}, changed=${importedCount}, failed=${failedCount}, active=${activeCount}, quarantine=${quarantineCount}, migrated=${migratedCount}, cleaned_legacy_quarantine=${cleanedLegacyQuarantineCount}`
     );
 
     return {
@@ -120,6 +152,8 @@ class AutomationService {
       activeCount,
       quarantineCount,
       trackedCount: tracked.length,
+      migratedCount,
+      cleanedLegacyQuarantineCount,
       autoCommit,
     };
   }
