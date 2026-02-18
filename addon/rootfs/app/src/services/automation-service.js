@@ -5,6 +5,8 @@ const yaml = require('js-yaml');
 const AUTO_QUARANTINE_MISS_THRESHOLD = 3;
 const UUID_LIKE_PATTERN = /^[a-f0-9]{32}$/i;
 const SCRIPT_ENTITY_PATTERN = /^script\.[a-z0-9_]+$/i;
+const RESTORE_VERIFY_TIMEOUT_MS = process.env.NODE_ENV === 'test' ? 80 : 12000;
+const RESTORE_VERIFY_INTERVAL_MS = process.env.NODE_ENV === 'test' ? 10 : 1000;
 const RESERVED_SCRIPT_SERVICE_IDS = new Set([
   'script.turn_on',
   'script.turn_off',
@@ -765,39 +767,88 @@ class AutomationService {
     }
 
     const parsed = yaml.load(fs.readFileSync(quarantinePath, 'utf8'));
-    if (entityType === 'script') {
-      await this.haClient.upsertScript(id, parsed);
-    } else {
-      await this.haClient.upsertAutomation(id, parsed);
-    }
-
-    const existenceCandidates = [...new Set([
+    const writeCandidates = [...new Set([
+      normalizeAutomationId(record.editId),
       normalizeAutomationId(record.entityId),
       normalizeAutomationId(record.id),
       normalizeAutomationId(id),
     ].filter(Boolean))];
+    const writeTarget = writeCandidates[0] || id;
+    console.log(`[restore] ${entityType} ${id}: restoring via target "${writeTarget}"`);
 
-    let restoredInHa = true;
-    if (entityType === 'script' && typeof this.haClient?.scriptExists === 'function') {
-      restoredInHa = false;
-      for (const candidate of existenceCandidates) {
-        if (await this.haClient.scriptExists(candidate)) {
-          restoredInHa = true;
+    if (entityType === 'script') {
+      await this.haClient.upsertScript(writeTarget, parsed);
+    } else {
+      await this.haClient.upsertAutomation(writeTarget, parsed);
+    }
+
+    const entityExistenceCandidates = [...new Set([
+      normalizeAutomationId(record.entityId),
+      normalizeAutomationId(record.id),
+      normalizeAutomationId(id),
+    ].filter(Boolean))];
+    const configExistenceCandidates = [...new Set([
+      normalizeAutomationId(record.editId),
+      normalizeAutomationId(writeTarget),
+      normalizeAutomationId(record.id),
+      normalizeAutomationId(id),
+    ].filter(Boolean))];
+
+    const verifyDeadline = Date.now() + RESTORE_VERIFY_TIMEOUT_MS;
+    let restoredInHa = false;
+    let lastVerifyError = null;
+
+    while (Date.now() <= verifyDeadline) {
+      try {
+        if (entityType === 'script' && typeof this.haClient?.scriptExists === 'function') {
+          for (const candidate of entityExistenceCandidates) {
+            if (await this.haClient.scriptExists(candidate)) {
+              restoredInHa = true;
+              break;
+            }
+          }
+        } else if (entityType === 'automation' && typeof this.haClient?.automationExists === 'function') {
+          for (const candidate of entityExistenceCandidates) {
+            if (await this.haClient.automationExists(candidate)) {
+              restoredInHa = true;
+              break;
+            }
+          }
+        }
+
+        if (!restoredInHa) {
+          if (entityType === 'script' && typeof this.haClient?.getScriptConfig === 'function') {
+            for (const candidate of configExistenceCandidates) {
+              const config = await this.haClient.getScriptConfig(candidate);
+              if (config) {
+                restoredInHa = true;
+                break;
+              }
+            }
+          } else if (entityType === 'automation' && typeof this.haClient?.getAutomationConfig === 'function') {
+            for (const candidate of configExistenceCandidates) {
+              const config = await this.haClient.getAutomationConfig(candidate);
+              if (config) {
+                restoredInHa = true;
+                break;
+              }
+            }
+          }
+        }
+
+        if (restoredInHa) {
           break;
         }
+      } catch (error) {
+        lastVerifyError = error;
       }
-    } else if (entityType === 'automation' && typeof this.haClient?.automationExists === 'function') {
-      restoredInHa = false;
-      for (const candidate of existenceCandidates) {
-        if (await this.haClient.automationExists(candidate)) {
-          restoredInHa = true;
-          break;
-        }
-      }
+
+      await new Promise((resolve) => setTimeout(resolve, RESTORE_VERIFY_INTERVAL_MS));
     }
 
     if (!restoredInHa) {
-      throw new Error(`Restore verification failed: ${id} is still not present in Home Assistant.`);
+      const detail = lastVerifyError ? ` Last verification error: ${String(lastVerifyError.message || lastVerifyError)}` : '';
+      throw new Error(`Restore verification failed: ${id} is still not present in Home Assistant.${detail}`);
     }
 
     this.gitBackup.moveToActive(id);
@@ -808,6 +859,7 @@ class AutomationService {
     });
 
     this.gitBackup.writeMetadata(this.store.state);
+    console.log(`[restore] ${entityType} ${id}: restore verification succeeded and entity moved to active.`);
     return updated;
   }
 

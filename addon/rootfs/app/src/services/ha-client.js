@@ -869,12 +869,14 @@ class HaClient {
     // Try dedicated endpoint first with multiple id forms.
     for (const candidateId of itemIdCandidates) {
       try {
+        console.log(`[ha-client] upsert ${domain}: trying /api/config/${domain}/config/${candidateId}`);
         return await this.request(`/api/config/${domain}/config/${encodeURIComponent(candidateId)}`, {
           method: 'POST',
           body: JSON.stringify(config),
         });
       } catch (error) {
         lastError = error;
+        console.warn(`[ha-client] upsert ${domain}: item endpoint failed for "${candidateId}": ${String(error?.message || error)}`);
         // Resource-not-found and endpoint-missing should both fallback to global create endpoint.
         if (isResourceNotFound(error) || isEndpointMissing(error)) {
           continue;
@@ -893,6 +895,7 @@ class HaClient {
     // Fallback create endpoint; retry with alternate id forms.
     for (const createId of createIdCandidates) {
       try {
+        console.log(`[ha-client] upsert ${domain}: trying /api/config/${domain}/config with id "${createId}"`);
         return await this.request(`/api/config/${domain}/config`, {
           method: 'POST',
           body: JSON.stringify({
@@ -902,12 +905,14 @@ class HaClient {
         });
       } catch (error) {
         lastError = error;
+        console.warn(`[ha-client] upsert ${domain}: create endpoint failed for "${createId}": ${String(error?.message || error)}`);
         if (isEndpointMissing(error)) {
           throw new Error(`Your Home Assistant does not expose ${domain} config write API. Restore is not available in this mode.`);
         }
       }
     }
 
+    console.warn(`[ha-client] upsert ${domain}: failed for "${normalizedEntityId}".`);
     throw lastError || new Error(`Failed to restore ${domain} ${normalizedEntityId} in Home Assistant.`);
   }
 
