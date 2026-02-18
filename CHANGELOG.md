@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0b5 - 2026-02-18
+
+- Added root `repository.yaml` so Home Assistant can validate this GitHub repository as an add-on repository.
+- Added required `arch` matrix in `addon/config.yaml`.
+- Enabled `homeassistant_api` and `hassio_api` in add-on config for API integration.
+- Bumped add-on metadata version to `1.0.0b5`.
+
 ## 1.0.0b4 - 2026-02-18
 
 - Added complete example configurations for private GitHub repositories in `addon/DOCS.md`.

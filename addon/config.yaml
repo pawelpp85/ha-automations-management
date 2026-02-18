@@ -1,13 +1,21 @@
 name: "HA Automations Management"
-version: "1.0.0b4"
+version: "1.0.0b5"
 slug: "ha_automations_management"
 description: "Organize, quarantine, and back up Home Assistant automations with local Git history"
 url: "https://github.com/pawelpp85/ha-automations-management"
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
 startup: services
 boot: auto
 init: false
 ingress: true
 ingress_port: 8099
+homeassistant_api: true
+hassio_api: true
 panel_icon: mdi:playlist-edit
 panel_title: Automation Manager
 map:
