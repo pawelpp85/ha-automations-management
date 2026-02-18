@@ -1,6 +1,6 @@
 # HA Automations Management Add-on
 
-Version: `1.0.0b5`
+Version: `1.0.0b6`
 
 This repository contains the project definition for a Home Assistant add-on focused on automation organization, quarantine backup, and Git-based history.
 
@@ -35,7 +35,16 @@ Use this URL in Home Assistant Add-on Store -> Repositories:
 
 ## Current Status
 
-Backend implementation and automated tests are available in beta iteration `1.0.0b5`. Frontend is currently minimal and will be expanded in the next beta.
+Backend and frontend are available in beta iteration `1.0.0b6`, including Automations, Devices, and Quarantine views.
+
+## Run Add-on UI Locally
+
+```bash
+docker build -t ha-automations-management-local -f addon/Dockerfile addon
+docker run --rm -p 8099:8099 --name ha-am-local ha-automations-management-local
+```
+
+Then open `http://127.0.0.1:8099`.
 
 ## Run Tests (Local Only)
 

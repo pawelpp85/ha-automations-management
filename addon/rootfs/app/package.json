@@ -1,6 +1,6 @@
 {
   "name": "ha-automations-management-addon",
-  "version": "1.0.0b5",
+  "version": "1.0.0b6",
   "private": true,
   "main": "src/server.js",
   "license": "Apache-2.0",

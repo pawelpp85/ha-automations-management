@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0b6 - 2026-02-18
+
+- Fixed local container startup: entrypoint now works both in HA (`with-contenv`) and plain Docker.
+- Implemented functional web UI with three views: `Automations`, `Devices`, and `Quarantine`.
+- Added UI actions for metadata updates, quarantine/restore/permanent-delete, import/sync, and manual Git commit/push.
+- Added responsive layout, tooltips/hints, warning banner, and disabled-button logic for invalid actions.
+- Bumped add-on metadata version to `1.0.0b6`.
+
 ## 1.0.0b5 - 2026-02-18
 
 - Added root `repository.yaml` so Home Assistant can validate this GitHub repository as an add-on repository.

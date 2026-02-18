@@ -5,14 +5,731 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>HA Automations Management</title>
   <style>
-    body { font-family: sans-serif; background: #0f141a; color: #d5e0ea; margin: 0; }
-    .wrap { max-width: 1200px; margin: 0 auto; padding: 1rem; }
+    :root {
+      --bg: #0d1116;
+      --bg-soft: #151b24;
+      --panel: #1c2430;
+      --line: #2e3a4b;
+      --text: #dce6f2;
+      --muted: #95a7bb;
+      --ok: #2ea97c;
+      --warn: #d9a441;
+      --danger: #d86a73;
+      --accent: #45b3df;
+      --accent-2: #93e0a3;
+      --quarantine: #6f7c8c;
+      --disabled: #566071;
+      --shadow: 0 14px 36px rgba(0, 0, 0, 0.32);
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #edf2f8;
+        --bg-soft: #f5f8fc;
+        --panel: #ffffff;
+        --line: #d6dfeb;
+        --text: #1a2733;
+        --muted: #556577;
+        --ok: #1f8f66;
+        --warn: #9f6f12;
+        --danger: #b0424b;
+        --accent: #1f7ca4;
+        --accent-2: #2a8b40;
+        --quarantine: #8a97a6;
+        --disabled: #a3adba;
+        --shadow: 0 8px 22px rgba(26, 39, 51, 0.12);
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 16% 0%, rgba(69, 179, 223, 0.12), transparent 42%),
+        radial-gradient(circle at 100% 0%, rgba(147, 224, 163, 0.12), transparent 33%),
+        var(--bg);
+      font-family: "Atkinson Hyperlegible", "Segoe UI", sans-serif;
+    }
+
+    .wrap {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 1rem;
+    }
+
+    .hero {
+      background: linear-gradient(145deg, var(--bg-soft), var(--panel));
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 1rem;
+      box-shadow: var(--shadow);
+    }
+
+    .hero h1 {
+      margin: 0;
+      font-size: 1.5rem;
+    }
+
+    .hero p {
+      margin: 0.4rem 0 0;
+      color: var(--muted);
+    }
+
+    .toolbar {
+      margin-top: 0.9rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+    }
+
+    button, .chip {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 0.55rem 0.8rem;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    button.primary {
+      border-color: rgba(69, 179, 223, 0.65);
+      background: linear-gradient(180deg, rgba(69, 179, 223, 0.2), rgba(69, 179, 223, 0.06));
+    }
+
+    button.warn {
+      border-color: rgba(217, 164, 65, 0.65);
+      background: linear-gradient(180deg, rgba(217, 164, 65, 0.2), rgba(217, 164, 65, 0.06));
+    }
+
+    button.danger {
+      border-color: rgba(216, 106, 115, 0.65);
+      background: linear-gradient(180deg, rgba(216, 106, 115, 0.22), rgba(216, 106, 115, 0.06));
+    }
+
+    button:disabled {
+      color: var(--disabled);
+      border-color: color-mix(in srgb, var(--line) 72%, transparent);
+      cursor: not-allowed;
+    }
+
+    .tabs {
+      margin-top: 0.9rem;
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .tabs button.active {
+      border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+    }
+
+    .warning-banner {
+      margin-top: 0.9rem;
+      border: 1px solid rgba(217, 164, 65, 0.45);
+      border-radius: 12px;
+      background: rgba(217, 164, 65, 0.1);
+      padding: 0.8rem;
+      display: none;
+    }
+
+    .warning-banner.visible {
+      display: block;
+    }
+
+    .view {
+      margin-top: 1rem;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      display: none;
+    }
+
+    .view.visible {
+      display: block;
+    }
+
+    .view-head {
+      padding: 0.95rem 1rem;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.6rem;
+    }
+
+    .filters {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(120px, 1fr));
+      gap: 0.55rem;
+      width: min(700px, 100%);
+    }
+
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--bg-soft);
+      color: var(--text);
+      font: inherit;
+      padding: 0.5rem 0.65rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.92rem;
+    }
+
+    th, td {
+      padding: 0.65rem;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    tr.quarantine {
+      color: var(--quarantine);
+      background: color-mix(in srgb, var(--panel) 85%, var(--quarantine));
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 0.84rem;
+      margin-left: 0.2rem;
+    }
+
+    .device-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      margin: 0.7rem;
+      padding: 0.7rem;
+      background: var(--bg-soft);
+    }
+
+    .device-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 700;
+    }
+
+    .device-links {
+      margin-top: 0.55rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.2rem;
+      padding: 0.38rem 0.6rem;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.2rem 0.45rem;
+      border-radius: 99px;
+      font-size: 0.8rem;
+      border: 1px solid var(--line);
+    }
+
+    .status.active {
+      color: var(--ok);
+    }
+
+    .status.quarantine {
+      color: var(--warn);
+    }
+
+    .toast {
+      position: fixed;
+      right: 1rem;
+      bottom: 1rem;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0.7rem 0.9rem;
+      display: none;
+      box-shadow: var(--shadow);
+      max-width: 420px;
+    }
+
+    .toast.visible {
+      display: block;
+    }
+
+    @media (max-width: 980px) {
+      .filters {
+        grid-template-columns: 1fr;
+      }
+
+      table, thead, tbody, tr, th, td {
+        display: block;
+      }
+
+      thead {
+        display: none;
+      }
+
+      tr {
+        border-bottom: 1px solid var(--line);
+        padding: 0.45rem 0;
+      }
+
+      td {
+        border: 0;
+      }
+
+      td::before {
+        content: attr(data-label);
+        display: block;
+        color: var(--muted);
+        font-size: 0.8rem;
+        margin-bottom: 0.18rem;
+      }
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>HA Automations Management</h1>
-    <p>Frontend implementation is available in version 1.0.0b3+.</p>
+    <section class="hero">
+      <h1>HA Automations Management</h1>
+      <p>Organize automations, map devices, and manage quarantine backups.</p>
+      <div class="toolbar">
+        <button id="btn-import" class="primary" title="Import new automations and auto-commit changes.">Import now</button>
+        <button id="btn-sync" class="primary" title="Run full sync and detect removed automations.">Sync now</button>
+        <button id="btn-commit" title="Create manual commit in backup repository.">Commit backup</button>
+        <button id="btn-push" title="Push committed backup changes to configured remote repository.">Push remote</button>
+      </div>
+      <div class="tabs">
+        <button data-tab="automations" class="active">Automations</button>
+        <button data-tab="devices">Devices</button>
+        <button data-tab="quarantine">Quarantine</button>
+      </div>
+      <div id="warning-banner" class="warning-banner"></div>
+    </section>
+
+    <section id="view-automations" class="view visible">
+      <div class="view-head">
+        <strong>Automation Catalog</strong>
+        <div class="filters">
+          <input id="f-category" placeholder="Filter category" />
+          <input id="f-label" placeholder="Filter label" />
+          <input id="f-room" placeholder="Filter room" />
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Automation</th>
+            <th>Status</th>
+            <th>Category</th>
+            <th>Labels</th>
+            <th>Room</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="automations-body"></tbody>
+      </table>
+    </section>
+
+    <section id="view-devices" class="view">
+      <div class="view-head">
+        <strong>Device Relationships</strong>
+        <span class="hint">Click automation chips to open new tab for edit context.</span>
+      </div>
+      <div id="devices-list"></div>
+    </section>
+
+    <section id="view-quarantine" class="view">
+      <div class="view-head">
+        <strong>Quarantine</strong>
+        <span class="hint">Quarantined automations are disabled in HA and stored in backup.</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Automation</th>
+            <th>Category</th>
+            <th>Labels</th>
+            <th>Room</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="quarantine-body"></tbody>
+      </table>
+    </section>
   </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const state = {
+      automations: [],
+      devices: [],
+      warnings: [],
+      inFlight: new Set(),
+      filters: { category: '', label: '', room: '' },
+    };
+
+    function byId(id) {
+      return document.getElementById(id);
+    }
+
+    function showToast(message, timeout = 3400) {
+      const toast = byId('toast');
+      toast.textContent = message;
+      toast.classList.add('visible');
+      window.clearTimeout(showToast.timer);
+      showToast.timer = window.setTimeout(() => toast.classList.remove('visible'), timeout);
+    }
+
+    function setBusy(key, busy) {
+      if (busy) state.inFlight.add(key);
+      else state.inFlight.delete(key);
+      const isBusy = state.inFlight.size > 0;
+      ['btn-import', 'btn-sync', 'btn-commit', 'btn-push'].forEach((id) => {
+        byId(id).disabled = isBusy;
+      });
+    }
+
+    async function api(url, options = {}) {
+      const response = await fetch(url, {
+        headers: { 'Content-Type': 'application/json' },
+        ...options,
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || `Request failed: ${response.status}`);
+      }
+
+      return payload;
+    }
+
+    function normalizeLabels(labels) {
+      return Array.isArray(labels) ? labels.join(', ') : '';
+    }
+
+    function parseLabels(text) {
+      return text.split(',').map((v) => v.trim()).filter(Boolean);
+    }
+
+    function openAutomationEditTab(automationId) {
+      const encoded = encodeURIComponent(automationId);
+      const url = `/config/automation/edit/${encoded}`;
+      window.open(url, '_blank', 'noopener');
+    }
+
+    async function refresh() {
+      const [automations, devices, warnings] = await Promise.all([
+        api('/api/automations'),
+        api('/api/devices'),
+        api('/api/warnings'),
+      ]);
+
+      state.automations = automations.data || [];
+      state.devices = devices.data || [];
+      state.warnings = warnings.data || [];
+
+      renderWarnings();
+      renderAutomations();
+      renderDevices();
+      renderQuarantine();
+    }
+
+    function renderWarnings() {
+      const box = byId('warning-banner');
+      if (!state.warnings.length) {
+        box.classList.remove('visible');
+        box.textContent = '';
+        return;
+      }
+
+      box.classList.add('visible');
+      box.innerHTML = `<strong>Warnings</strong><br>${state.warnings.slice(0, 3).map((w) => w.message).join('<br>')}`;
+    }
+
+    function filterAutomation(item) {
+      const c = state.filters.category.trim().toLowerCase();
+      const l = state.filters.label.trim().toLowerCase();
+      const r = state.filters.room.trim().toLowerCase();
+
+      const category = (item.category || '').toLowerCase();
+      const room = (item.room || '').toLowerCase();
+      const labels = (item.labels || []).join(' ').toLowerCase();
+
+      return (!c || category.includes(c)) && (!l || labels.includes(l)) && (!r || room.includes(r));
+    }
+
+    function renderAutomations() {
+      const body = byId('automations-body');
+      const rows = state.automations.filter(filterAutomation);
+
+      body.innerHTML = rows.map((item) => {
+        const active = item.status !== 'quarantine';
+        const rowClass = active ? '' : 'quarantine';
+        return `
+          <tr class="${rowClass}">
+            <td data-label="Automation">
+              <strong>${item.alias || item.id}</strong><br>
+              <small>${item.id}</small>
+            </td>
+            <td data-label="Status">
+              <span class="status ${active ? 'active' : 'quarantine'}">${active ? 'active' : 'quarantine'}</span>
+            </td>
+            <td data-label="Category"><input data-field="category" data-id="${item.id}" value="${item.category || ''}" placeholder="e.g. climate" /></td>
+            <td data-label="Labels"><input data-field="labels" data-id="${item.id}" value="${normalizeLabels(item.labels)}" placeholder="comma,separated" /></td>
+            <td data-label="Room"><input data-field="room" data-id="${item.id}" value="${item.room || ''}" placeholder="e.g. kitchen" /></td>
+            <td data-label="Actions">
+              <div class="actions">
+                <button class="primary" data-action="save-meta" data-id="${item.id}" title="Save category, labels, and room metadata.">Save meta</button>
+                <button data-action="open-edit" data-id="${item.id}" title="Open Home Assistant automation edit page in a new tab.">Open edit</button>
+                <button class="warn" data-action="quarantine" data-id="${item.id}" ${active ? '' : 'disabled'} title="Move automation to quarantine and remove it from HA after confirmation.">Quarantine</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderDevices() {
+      const list = byId('devices-list');
+      if (!state.devices.length) {
+        list.innerHTML = '<div class="device-card">No devices indexed yet. Run import/sync.</div>';
+        return;
+      }
+
+      list.innerHTML = state.devices.map((device) => `
+        <div class="device-card">
+          <div class="device-title">
+            <span>${device.deviceId}</span>
+            <span class="chip">${device.automationIds.length} automations</span>
+          </div>
+          <div class="device-links">
+            ${device.automationIds.map((a) => `
+              <button data-action="open-edit" data-id="${a.id}" title="Open automation edit in new tab.">
+                ${a.alias || a.id} (${a.status})
+              </button>
+            `).join('')}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderQuarantine() {
+      const body = byId('quarantine-body');
+      const rows = state.automations.filter((item) => item.status === 'quarantine').filter(filterAutomation);
+
+      body.innerHTML = rows.map((item) => `
+        <tr class="quarantine">
+          <td data-label="Automation">
+            <strong>${item.alias || item.id}</strong><br>
+            <small>${item.id}</small>
+          </td>
+          <td data-label="Category">${item.category || ''}</td>
+          <td data-label="Labels">${normalizeLabels(item.labels)}</td>
+          <td data-label="Room">${item.room || ''}</td>
+          <td data-label="Actions">
+            <div class="actions">
+              <button class="primary" data-action="restore" data-id="${item.id}" title="Restore automation from quarantine backup into HA.">Restore</button>
+              <button class="danger" data-action="delete-quarantine" data-id="${item.id}" title="Permanently delete quarantine backup entry after confirmation.">Permanent delete</button>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+
+      if (!rows.length) {
+        body.innerHTML = '<tr><td colspan="5">No quarantined automations.</td></tr>';
+      }
+    }
+
+    async function saveMeta(id) {
+      const category = document.querySelector(`input[data-id="${id}"][data-field="category"]`)?.value || '';
+      const labels = document.querySelector(`input[data-id="${id}"][data-field="labels"]`)?.value || '';
+      const room = document.querySelector(`input[data-id="${id}"][data-field="room"]`)?.value || '';
+
+      await api(`/api/automations/${encodeURIComponent(id)}/meta`, {
+        method: 'POST',
+        body: JSON.stringify({ category, labels: parseLabels(labels), room }),
+      });
+
+      showToast(`Metadata updated for ${id}`);
+      await refresh();
+    }
+
+    async function quarantine(id) {
+      const ok = window.confirm(
+        `Remove ${id} from Home Assistant and keep it in quarantine backup?`
+      );
+      if (!ok) return;
+
+      await api(`/api/automations/${encodeURIComponent(id)}/quarantine`, {
+        method: 'POST',
+        body: JSON.stringify({ confirmed: true }),
+      });
+
+      showToast(`${id} moved to quarantine`);
+      await refresh();
+    }
+
+    async function restore(id) {
+      await api(`/api/quarantine/${encodeURIComponent(id)}/restore`, { method: 'POST' });
+      showToast(`${id} restored to HA`);
+      await refresh();
+    }
+
+    async function deleteQuarantine(id) {
+      const ok = window.confirm(`Permanently delete ${id} from quarantine backup?`);
+      if (!ok) return;
+
+      await api(`/api/quarantine/${encodeURIComponent(id)}?confirmed=true`, { method: 'DELETE' });
+      showToast(`${id} permanently deleted from quarantine`);
+      await refresh();
+    }
+
+    async function runImport() {
+      setBusy('import', true);
+      try {
+        const result = await api('/api/import', { method: 'POST' });
+        showToast(`Import done: ${result.importedCount || 0} changed`);
+        await refresh();
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        setBusy('import', false);
+      }
+    }
+
+    async function runSync() {
+      setBusy('sync', true);
+      try {
+        const result = await api('/api/sync', { method: 'POST' });
+        showToast(`Sync done: ${result.importedCount || 0} changed`);
+        await refresh();
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        setBusy('sync', false);
+      }
+    }
+
+    async function runCommit() {
+      const message = window.prompt('Commit message', 'chore(ui): manual backup commit') || '';
+      if (!message.trim()) return;
+
+      setBusy('commit', true);
+      try {
+        const result = await api('/api/git/commit', {
+          method: 'POST',
+          body: JSON.stringify({ message: message.trim() }),
+        });
+
+        if (result.created) showToast('Backup commit created');
+        else showToast('No backup changes to commit');
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        setBusy('commit', false);
+      }
+    }
+
+    async function runPush() {
+      setBusy('push', true);
+      try {
+        const result = await api('/api/git/push', { method: 'POST' });
+        showToast(`Pushed to remote branch ${result.branch}`);
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        setBusy('push', false);
+      }
+    }
+
+    function onTableAction(event) {
+      const target = event.target.closest('button[data-action]');
+      if (!target) return;
+
+      const action = target.dataset.action;
+      const id = target.dataset.id;
+
+      const run = async () => {
+        if (action === 'open-edit') openAutomationEditTab(id);
+        if (action === 'save-meta') await saveMeta(id);
+        if (action === 'quarantine') await quarantine(id);
+        if (action === 'restore') await restore(id);
+        if (action === 'delete-quarantine') await deleteQuarantine(id);
+      };
+
+      run().catch((error) => showToast(error.message));
+    }
+
+    function setupTabs() {
+      document.querySelectorAll('.tabs button').forEach((button) => {
+        button.addEventListener('click', () => {
+          document.querySelectorAll('.tabs button').forEach((b) => b.classList.remove('active'));
+          button.classList.add('active');
+
+          const tab = button.dataset.tab;
+          document.querySelectorAll('.view').forEach((view) => view.classList.remove('visible'));
+          byId(`view-${tab}`).classList.add('visible');
+        });
+      });
+    }
+
+    function setupFilters() {
+      byId('f-category').addEventListener('input', (e) => {
+        state.filters.category = e.target.value;
+        renderAutomations();
+        renderQuarantine();
+      });
+
+      byId('f-label').addEventListener('input', (e) => {
+        state.filters.label = e.target.value;
+        renderAutomations();
+        renderQuarantine();
+      });
+
+      byId('f-room').addEventListener('input', (e) => {
+        state.filters.room = e.target.value;
+        renderAutomations();
+        renderQuarantine();
+      });
+    }
+
+    byId('btn-import').addEventListener('click', runImport);
+    byId('btn-sync').addEventListener('click', runSync);
+    byId('btn-commit').addEventListener('click', runCommit);
+    byId('btn-push').addEventListener('click', runPush);
+
+    byId('automations-body').addEventListener('click', onTableAction);
+    byId('devices-list').addEventListener('click', onTableAction);
+    byId('quarantine-body').addEventListener('click', onTableAction);
+
+    setupTabs();
+    setupFilters();
+
+    refresh().catch((error) => showToast(error.message));
+  </script>
 </body>
 </html>
