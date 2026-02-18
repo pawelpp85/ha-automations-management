@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const yaml = require('js-yaml');
 const { ensureDir, atomicWrite, removeIfExists } = require('../lib/fs-utils');
 
@@ -25,6 +25,31 @@ class GitBackupService {
       env,
       encoding: 'utf8',
     });
+  }
+
+  gitRawAllowExitCodes(args, allowedExitCodes = [0], envPatch = {}) {
+    const env = {
+      ...process.env,
+      ...envPatch,
+    };
+
+    const result = spawnSync('git', args, {
+      cwd: this.repoDir,
+      env,
+      encoding: 'utf8',
+    });
+
+    const status = Number(result.status ?? 0);
+    if (allowedExitCodes.includes(status)) {
+      return result.stdout || '';
+    }
+
+    if (result.error) {
+      throw result.error;
+    }
+
+    const stderr = String(result.stderr || '').trim();
+    throw new Error(stderr || `Git command failed with exit code ${status}: git ${args.join(' ')}`);
   }
 
   git(args, envPatch = {}) {
@@ -216,6 +241,47 @@ class GitBackupService {
       // If git cannot determine ahead/behind, keep push enabled so user can retry.
       return true;
     }
+  }
+
+  getDiff() {
+    let output = '';
+    let hasHead = true;
+
+    try {
+      this.git(['rev-parse', '--verify', 'HEAD']);
+    } catch (_error) {
+      hasHead = false;
+    }
+
+    if (hasHead) {
+      output += this.gitRawAllowExitCodes(['diff', '--no-color', 'HEAD', '--', '.'], [0, 1]);
+    } else {
+      output += this.gitRawAllowExitCodes(['diff', '--no-color', '--', '.'], [0, 1]);
+    }
+
+    let untrackedFiles = [];
+    try {
+      untrackedFiles = this.git(['ls-files', '--others', '--exclude-standard'])
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+    } catch (_error) {
+      untrackedFiles = [];
+    }
+
+    for (const relativePath of untrackedFiles) {
+      const fileDiff = this.gitRawAllowExitCodes(
+        ['diff', '--no-color', '--no-index', '--', '/dev/null', relativePath],
+        [0, 1]
+      );
+      if (!fileDiff) {
+        continue;
+      }
+      output += output.endsWith('\n') || output.length === 0 ? '' : '\n';
+      output += fileDiff;
+    }
+
+    return String(output || '').trimEnd();
   }
 
   commit(message) {

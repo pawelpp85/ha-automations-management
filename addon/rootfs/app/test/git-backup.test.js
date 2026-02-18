@@ -87,6 +87,23 @@ test('GitBackupService hasPendingPush is true when remote is enabled and commit 
   assert.equal(backup.hasPendingPush(), true);
 });
 
+test('GitBackupService getDiff returns unified patch with line changes', () => {
+  const repoDir = tempDir('ha-am-repo-diff-');
+  const backup = new GitBackupService(options(), repoDir);
+
+  backup.writeYaml('active', 'automation.diff_view', {
+    alias: 'Diff view',
+    trigger: [],
+    action: [],
+  });
+
+  const diff = backup.getDiff();
+  assert.equal(typeof diff, 'string');
+  assert.ok(diff.includes('diff --git'));
+  assert.ok(diff.includes('automation.diff_view.yaml'));
+  assert.ok(diff.includes('+alias: Diff view'));
+});
+
 test('GitBackupService rejects invalid base64 SSH key early', () => {
   const repoDir = tempDir('ha-am-repo-push-');
   const backup = new GitBackupService({

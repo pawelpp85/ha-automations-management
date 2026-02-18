@@ -864,6 +864,14 @@ class AutomationService {
         : false,
     };
   }
+
+  gitDiff() {
+    return {
+      diff: typeof this.gitBackup.getDiff === 'function'
+        ? this.gitBackup.getDiff()
+        : '',
+    };
+  }
 }
 
 module.exports = {

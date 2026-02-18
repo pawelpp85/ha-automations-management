@@ -462,6 +462,70 @@
       display: block;
     }
 
+    .diff-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(3, 3, 4, 0.72);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      z-index: 40;
+    }
+
+    .diff-modal.visible {
+      display: flex;
+    }
+
+    .diff-panel {
+      width: min(1180px, 100%);
+      max-height: 90vh;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .diff-head {
+      padding: 0.7rem 0.85rem;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.55rem;
+    }
+
+    .diff-content {
+      margin: 0;
+      padding: 0.65rem 0.75rem;
+      overflow: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 0.83rem;
+      line-height: 1.4;
+      white-space: pre;
+    }
+
+    .diff-line.meta {
+      color: #88b7ff;
+    }
+
+    .diff-line.hunk {
+      color: #d7a85a;
+    }
+
+    .diff-line.add {
+      color: #7ed79f;
+      background: rgba(30, 78, 48, 0.35);
+    }
+
+    .diff-line.remove {
+      color: #f0a2a8;
+      background: rgba(92, 33, 39, 0.34);
+    }
+
     @media (max-width: 980px) {
       .filters {
         grid-template-columns: 1fr;
@@ -513,6 +577,7 @@
         </div>
         <div class="repo-actions">
           <button id="btn-commit" title="Create manual commit in backup repository.">Commit</button>
+          <button id="btn-view-changes" title="View pending local repository changes before commit.">View changes</button>
           <button id="btn-push" title="Push committed backup changes to configured remote repository.">Push</button>
         </div>
       </div>
@@ -652,6 +717,16 @@
     </section>
   </div>
 
+  <div id="diff-modal" class="diff-modal" aria-hidden="true">
+    <div class="diff-panel">
+      <div class="diff-head">
+        <strong>Pending Git Changes</strong>
+        <button id="btn-close-diff">Close</button>
+      </div>
+      <pre id="diff-content" class="diff-content"></pre>
+    </div>
+  </div>
+
   <div id="toast" class="toast"></div>
 
   <script>
@@ -714,6 +789,7 @@
       byId('btn-import').disabled = isBusy;
       byId('btn-push').disabled = isBusy || !state.gitHasPendingPush;
       byId('btn-commit').disabled = isBusy || !state.gitHasChanges;
+      byId('btn-view-changes').disabled = isBusy || !state.gitHasChanges;
     }
 
     function resolveApiUrl(url) {
@@ -950,6 +1026,7 @@
       }
       byId('btn-commit').disabled = state.inFlight.size > 0 || !state.gitHasChanges;
       byId('btn-push').disabled = state.inFlight.size > 0 || !state.gitHasPendingPush;
+      byId('btn-view-changes').disabled = state.inFlight.size > 0 || !state.gitHasChanges;
 
       renderFilterSuggestions();
       renderWarnings();
@@ -996,6 +1073,57 @@
     async function clearAllWarnings() {
       await api('/api/warnings', { method: 'DELETE' });
       await refresh();
+    }
+
+    function closeDiffView() {
+      const modal = byId('diff-modal');
+      modal.classList.remove('visible');
+      modal.setAttribute('aria-hidden', 'true');
+    }
+
+    function renderDiff(diffText) {
+      const content = byId('diff-content');
+      const normalized = String(diffText || '');
+      if (!normalized.trim()) {
+        content.innerHTML = '<div class="diff-line">No pending local changes.</div>';
+        return;
+      }
+
+      const lines = normalized.replace(/\r\n/g, '\n').split('\n');
+      content.innerHTML = lines.map((line) => {
+        let kind = '';
+        if (line.startsWith('+') && !line.startsWith('+++')) {
+          kind = 'add';
+        } else if (line.startsWith('-') && !line.startsWith('---')) {
+          kind = 'remove';
+        } else if (line.startsWith('@@')) {
+          kind = 'hunk';
+        } else if (
+          line.startsWith('diff --git')
+          || line.startsWith('index ')
+          || line.startsWith('--- ')
+          || line.startsWith('+++ ')
+          || line.startsWith('new file mode')
+          || line.startsWith('deleted file mode')
+          || line.startsWith('similarity index')
+          || line.startsWith('rename ')
+        ) {
+          kind = 'meta';
+        }
+        return `<div class="diff-line ${kind}">${escapeHtml(line)}</div>`;
+      }).join('');
+    }
+
+    async function openDiffView() {
+      try {
+        const result = await api('/api/git/diff');
+        renderDiff(result?.data?.diff || '');
+        const modal = byId('diff-modal');
+        modal.classList.add('visible');
+        modal.setAttribute('aria-hidden', 'false');
+      } catch (error) {
+        showToast(error.message);
+      }
     }
 
     function getEntityStatus(item) {
@@ -1749,7 +1877,14 @@
 
     byId('btn-import').addEventListener('click', runImport);
     byId('btn-commit').addEventListener('click', runCommit);
+    byId('btn-view-changes').addEventListener('click', openDiffView);
     byId('btn-push').addEventListener('click', runPush);
+    byId('btn-close-diff').addEventListener('click', closeDiffView);
+    byId('diff-modal').addEventListener('click', (event) => {
+      if (event.target === byId('diff-modal')) {
+        closeDiffView();
+      }
+    });
 
     byId('automations-body').addEventListener('click', onTableAction);
     byId('scripts-body').addEventListener('click', onTableAction);
