@@ -1,5 +1,5 @@
 name: "HA Automations Management"
-version: "1.0.0b2"
+version: "1.0.0b3"
 slug: "ha_automations_management"
 description: "Organize, quarantine, and back up Home Assistant automations with local Git history"
 url: "https://github.com/pawelpp85/ha-automations-management"
@@ -14,15 +14,25 @@ map:
   - addon_config:rw
   - backup:rw
 options:
+  # Periodic import/sync interval in seconds.
   sync_interval_seconds: 300
+  # Enable push to external Git remote.
   remote_enabled: false
+  # Remote repository URL (SSH or HTTPS).
   remote_url: ""
+  # Target branch for manual push.
   remote_branch: "main"
+  # Authentication mode for remote push.
   remote_auth_mode: "ssh"
+  # SSH private key material used for remote push (optional).
   remote_ssh_key: ""
+  # HTTPS username (optional, used with token).
   remote_https_username: ""
+  # HTTPS token or password (optional).
   remote_https_token: ""
+  # Author name used for backup commits.
   git_user_name: "HA Automation Manager"
+  # Author email used for backup commits.
   git_user_email: "ha-automation-manager@local"
 schema:
   sync_interval_seconds: int(30,3600)

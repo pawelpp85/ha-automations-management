@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0b3 - 2026-02-18
+
+- Added automated test suite for backend services (`store`, `git backup`, `automation service`).
+- Added test safety checks to block production-mode test execution.
+- Added npm test scripts for local and CI test runs.
+- Added configuration option explanations in `addon/config.yaml` and `addon/DOCS.md`.
+- Updated add-on version metadata to `1.0.0b3`.
+
 ## 1.0.0b2 - 2026-02-18
 
 - Implemented Home Assistant add-on runtime skeleton (`config.yaml`, `Dockerfile`, entrypoint).

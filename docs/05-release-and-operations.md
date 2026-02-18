@@ -42,3 +42,9 @@ Examples:
 - Disabled buttons correctly represent action validity.
 - Desktop/mobile layouts are usable.
 - Light/dark theme compatibility is verified.
+
+## Test Environment Policy
+
+- Never run automated tests against production Home Assistant.
+- Use local/staging instances only (for example, a dev container or local HA VM).
+- Keep `NODE_ENV=test` for all CI and local automation test jobs.

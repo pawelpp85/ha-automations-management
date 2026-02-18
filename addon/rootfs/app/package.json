@@ -1,11 +1,13 @@
 {
   "name": "ha-automations-management-addon",
-  "version": "1.0.0b2",
+  "version": "1.0.0b3",
   "private": true,
   "main": "src/server.js",
   "license": "Apache-2.0",
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "test": "NODE_ENV=test node --test test/*.test.js",
+    "test:ci": "NODE_ENV=test CI=1 node --test test/*.test.js"
   },
   "dependencies": {
     "express": "^4.19.2",

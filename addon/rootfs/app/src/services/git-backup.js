@@ -5,9 +5,9 @@ const yaml = require('js-yaml');
 const { ensureDir, atomicWrite, removeIfExists } = require('../lib/fs-utils');
 
 class GitBackupService {
-  constructor(options) {
+  constructor(options, repoDir = '/data/automation_backup_repo') {
     this.options = options;
-    this.repoDir = '/data/automation_backup_repo';
+    this.repoDir = repoDir;
     this.activeDir = path.join(this.repoDir, 'automations/active');
     this.quarantineDir = path.join(this.repoDir, 'automations/quarantine');
     this.metadataDir = path.join(this.repoDir, 'metadata');
