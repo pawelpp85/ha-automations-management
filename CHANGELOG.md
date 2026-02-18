@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0b18 - 2026-02-18
+
+- Added `Permanent delete` action directly in main `Automations` table for rows already in `quarantine`.
+- This allows full removal from add-on catalog/backup without switching tabs.
+- Bumped add-on metadata version to `1.0.0b18`.
+
 ## 1.0.0b17 - 2026-02-18
 
 - Startup/ingress reliability:

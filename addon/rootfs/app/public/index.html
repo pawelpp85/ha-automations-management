@@ -946,6 +946,7 @@
                 <button data-action="open-edit" data-id="${escapeHtml(item.id)}" data-edit-id="${escapeHtml(editId)}" title="Open Home Assistant automation edit page in a new tab.">Edit</button>
                 <button data-action="open-raw" data-id="${escapeHtml(item.id)}" title="Open YAML history for this automation.">History</button>
                 <button class="warn" data-action="quarantine" data-id="${escapeHtml(item.id)}" ${isQuarantine ? 'disabled' : ''} title="Move automation to quarantine and remove it from HA after confirmation.">Quarantine</button>
+                ${isQuarantine ? `<button class="danger" data-action="delete-quarantine" data-id="${escapeHtml(item.id)}" title="Permanently delete quarantine backup entry after confirmation.">Permanent delete</button>` : ''}
               </div>
             </td>
           </tr>
