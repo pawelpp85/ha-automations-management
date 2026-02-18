@@ -96,3 +96,42 @@ test('HaClient listViaWsApi skips stale entity-registry automation without state
   const list = await client.listViaWsApi();
   assert.equal(list.length, 0);
 });
+
+test('HaClient updateEntityMetadata creates missing room/label/category before assign', async () => {
+  const client = new HaClient();
+  let updatePayload = null;
+  client.createWsClient = async () => new FakeWsClient({
+    'config/area_registry/list': async () => [],
+    'config/label_registry/list': async () => [],
+    'config/category_registry/list': async () => [],
+    'config/area_registry/create': async ({ name }) => ({
+      area_id: 'area_living_room',
+      name,
+    }),
+    'config/label_registry/create': async ({ name }) => ({
+      label_id: 'label_new',
+      name,
+    }),
+    'config/category_registry/create': async ({ name, scope }) => ({
+      category_id: 'category_new',
+      name,
+      scope,
+    }),
+    'config/entity_registry/update': async (payload) => {
+      updatePayload = payload;
+      return { success: true };
+    },
+  });
+
+  const result = await client.updateEntityMetadata('automation.test_missing_meta', {
+    room: 'Living Room',
+    labels: ['Urgent'],
+    category: 'Alarm',
+  });
+
+  assert.equal(result.applied, true);
+  assert.equal(updatePayload.entity_id, 'automation.test_missing_meta');
+  assert.equal(updatePayload.area_id, 'area_living_room');
+  assert.deepEqual(updatePayload.labels, ['label_new']);
+  assert.equal(updatePayload.categories.automation, 'category_new');
+});

@@ -48,6 +48,16 @@ function inferHaEnabled(domain, stateValue) {
   return stateValue !== 'off';
 }
 
+function extractRegistryId(entry, keys) {
+  for (const key of keys || []) {
+    const value = String(entry?.[key] || '').trim();
+    if (value) {
+      return value;
+    }
+  }
+  return '';
+}
+
 class HaClient {
   constructor() {
     this.baseUrl = process.env.HA_URL || 'http://supervisor/core';
@@ -969,6 +979,124 @@ class HaClient {
     this.categoryRegistryLoadedAt = Date.now();
   }
 
+  async ensureAreaId(client, roomName) {
+    const room = String(roomName || '').trim();
+    if (!room) {
+      return null;
+    }
+
+    const existing = this.resolveAreaId(room);
+    if (existing) {
+      return existing;
+    }
+
+    try {
+      const created = await client.request('config/area_registry/create', { name: room });
+      const areaId = extractRegistryId(created, ['area_id', 'id']);
+      if (areaId) {
+        const name = String(created?.name || room).trim() || room;
+        this.areaNameById.set(areaId, name);
+        this.areaIdByName.set(name.toLowerCase(), areaId);
+        return areaId;
+      }
+    } catch (error) {
+      throw new Error(`Failed to create room "${room}" in Home Assistant: ${String(error?.message || error)}`);
+    }
+
+    await this.fetchMetadataRegistries(client);
+    const resolved = this.resolveAreaId(room);
+    if (resolved) {
+      return resolved;
+    }
+
+    throw new Error(`Failed to resolve or create room "${room}" in Home Assistant.`);
+  }
+
+  async ensureLabelIds(client, values) {
+    const resolved = [];
+
+    for (const raw of values || []) {
+      const value = String(raw || '').trim();
+      if (!value) {
+        continue;
+      }
+
+      if (this.labelNameById.has(value)) {
+        resolved.push(value);
+        continue;
+      }
+
+      const byName = this.labelIdByName.get(value.toLowerCase());
+      if (byName) {
+        resolved.push(byName);
+        continue;
+      }
+
+      try {
+        const created = await client.request('config/label_registry/create', { name: value });
+        const labelId = extractRegistryId(created, ['label_id', 'id']);
+        if (labelId) {
+          const labelName = String(created?.name || value).trim() || value;
+          this.labelNameById.set(labelId, labelName);
+          this.labelIdByName.set(labelName.toLowerCase(), labelId);
+          resolved.push(labelId);
+          continue;
+        }
+      } catch (error) {
+        throw new Error(`Failed to create label "${value}" in Home Assistant: ${String(error?.message || error)}`);
+      }
+
+      await this.fetchMetadataRegistries(client);
+      const resolvedAfterRefresh = this.labelIdByName.get(value.toLowerCase());
+      if (resolvedAfterRefresh) {
+        resolved.push(resolvedAfterRefresh);
+        continue;
+      }
+
+      throw new Error(`Failed to resolve or create label "${value}" in Home Assistant.`);
+    }
+
+    return [...new Set(resolved)];
+  }
+
+  async ensureCategoryId(client, categoryName, domain) {
+    const category = String(categoryName || '').trim();
+    if (!category) {
+      return null;
+    }
+
+    const scopes = DOMAIN_SCOPES[domain] || CATEGORY_SCOPES;
+    const existing = this.resolveCategoryId(category, scopes);
+    if (existing) {
+      return existing;
+    }
+
+    try {
+      const created = await client.request('config/category_registry/create', {
+        name: category,
+        scope: domain,
+      });
+      const categoryId = extractRegistryId(created, ['category_id', 'id']);
+      if (categoryId) {
+        this.updateCategoryScope(domain, [{
+          category_id: categoryId,
+          name: String(created?.name || category).trim() || category,
+        }]);
+        return categoryId;
+      }
+    } catch (error) {
+      throw new Error(`Failed to create category "${category}" in Home Assistant: ${String(error?.message || error)}`);
+    }
+
+    await this.fetchMetadataRegistries(client);
+    const resolved = this.resolveCategoryId(category, scopes);
+    if (resolved) {
+      return resolved;
+    }
+
+    throw new Error(`Failed to resolve or create category "${category}" in Home Assistant.`);
+  }
+
   async updateEntityMetadata(entityId, payload = {}) {
     const targetEntityId = String(entityId || '').trim();
     if (!targetEntityId.startsWith('automation.') && !targetEntityId.startsWith('script.')) {
@@ -986,28 +1114,18 @@ class HaClient {
     try {
       await this.fetchMetadataRegistries(client);
 
-      const areaId = this.resolveAreaId(room);
-      if (room && !areaId) {
-        throw new Error(`Room "${room}" was not found in Home Assistant areas.`);
-      }
-
-      const labelResult = this.resolveLabelIds(labels);
-      if (labelResult.unknown.length) {
-        throw new Error(`Unknown HA labels: ${labelResult.unknown.join(', ')}`);
-      }
+      const areaId = await this.ensureAreaId(client, room);
+      const resolvedLabelIds = await this.ensureLabelIds(client, labels);
 
       let categoryId = null;
       if (category) {
-        categoryId = this.resolveCategoryId(category, DOMAIN_SCOPES[domain] || CATEGORY_SCOPES);
-        if (!categoryId) {
-          throw new Error(`Unknown HA category: ${category}`);
-        }
+        categoryId = await this.ensureCategoryId(client, category, domain);
       }
 
       await client.request('config/entity_registry/update', {
         entity_id: targetEntityId,
         area_id: areaId,
-        labels: labelResult.resolved,
+        labels: resolvedLabelIds,
         categories: {
           [domain]: categoryId,
         },

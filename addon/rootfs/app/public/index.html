@@ -15,6 +15,7 @@
       --ok: #2ea97c;
       --warn: #d9a441;
       --danger: #d86a73;
+      --info: #5ea8ff;
       --accent: #b15472;
       --accent-2: #7a233c;
       --quarantine: #97868d;
@@ -33,6 +34,7 @@
         --ok: #1f8f66;
         --warn: #9f6f12;
         --danger: #b0424b;
+        --info: #256fd1;
         --accent: #8f2f4f;
         --accent-2: #6f1e39;
         --quarantine: #9c808b;
@@ -347,8 +349,8 @@
 
     .device-automation .history {
       border-left: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(207, 111, 141, 0.22), rgba(141, 41, 68, 0.14));
-      color: color-mix(in srgb, var(--accent-2) 72%, var(--text));
+      background: linear-gradient(180deg, rgba(72, 147, 241, 0.26), rgba(31, 91, 173, 0.14));
+      color: color-mix(in srgb, var(--info) 75%, var(--text));
       font-weight: 600;
     }
 
@@ -443,6 +445,13 @@
 
     .status.disabled {
       color: var(--muted);
+    }
+
+    .actions button[data-action="open-raw"] {
+      border-color: rgba(94, 168, 255, 0.65);
+      background: linear-gradient(180deg, rgba(94, 168, 255, 0.22), rgba(56, 123, 212, 0.1));
+      color: color-mix(in srgb, var(--info) 78%, var(--text));
+      font-weight: 600;
     }
 
     .toast {
@@ -736,6 +745,7 @@
       devices: [],
       warnings: [],
       inFlight: new Set(),
+      metaInFlight: new Set(),
       gitHasChanges: false,
       gitHasPendingPush: false,
       filters: { name: '', category: '', label: '', room: '', status: '', device: '' },
@@ -837,6 +847,29 @@
         }
       });
       return [...unique];
+    }
+
+    function arraysEqual(a, b) {
+      const left = Array.isArray(a) ? a : [];
+      const right = Array.isArray(b) ? b : [];
+      if (left.length !== right.length) {
+        return false;
+      }
+      return left.every((value, index) => value === right[index]);
+    }
+
+    function resolveEntityTypeFromId(id, fallback = 'automation') {
+      const raw = String(id || '');
+      if (raw.startsWith('script.')) {
+        return 'script';
+      }
+      return fallback === 'script' ? 'script' : 'automation';
+    }
+
+    function findEntityRecord(id, entityType = 'automation') {
+      const normalizedType = resolveEntityTypeFromId(id, entityType);
+      const list = normalizedType === 'script' ? state.scripts : state.automations;
+      return list.find((item) => item.id === id) || null;
     }
 
     function readLabelsFromEditor(id) {
@@ -1247,7 +1280,6 @@
             </td>
             <td data-label="Actions">
               <div class="actions">
-                <button class="primary" data-action="save-meta" data-entity-type="automation" data-id="${escapeHtml(item.id)}" title="Save category, labels, and room metadata.">Save meta</button>
                 <button data-action="open-raw" data-entity-type="automation" data-id="${escapeHtml(item.id)}" title="Open YAML history for this automation.">History</button>
                 ${isQuarantine
                   ? `<button class="primary" data-action="restore" data-entity-type="automation" data-id="${escapeHtml(item.id)}" title="Restore automation from quarantine backup into HA.">Przywroc</button>`
@@ -1333,7 +1365,6 @@
             ` : ''}
             <td data-label="Actions">
               <div class="actions">
-                <button class="primary" data-action="save-meta" data-entity-type="script" data-id="${escapeHtml(item.id)}" title="Save category, labels, and room metadata.">Save meta</button>
                 <button data-action="open-raw" data-entity-type="script" data-id="${escapeHtml(item.id)}" title="Open YAML history for this script.">History</button>
                 ${isQuarantine
                   ? `<button class="primary" data-action="restore" data-entity-type="script" data-id="${escapeHtml(item.id)}" title="Restore script from quarantine backup into HA.">Przywroc</button>`
@@ -1588,25 +1619,57 @@
       }
     }
 
-    async function saveMeta(id, entityType = 'automation') {
+    async function saveMeta(id, entityType = 'automation', { silent = false } = {}) {
+      if (!id) {
+        return { skipped: true };
+      }
+
+      const normalizedEntityType = resolveEntityTypeFromId(id, entityType);
       const category = document.querySelector(`input[data-id="${id}"][data-field="category"]`)?.value || '';
       const labels = readLabelsFromEditor(id);
       const room = document.querySelector(`input[data-id="${id}"][data-field="room"]`)?.value || '';
-      const domain = entityType === 'script' ? 'scripts' : 'automations';
+      const domain = normalizedEntityType === 'script' ? 'scripts' : 'automations';
+
+      const current = findEntityRecord(id, normalizedEntityType);
+      const currentCategory = String(current?.category || '');
+      const currentRoom = String(current?.room || '');
+      const currentLabels = normalizeLabelArray(current?.labels || []);
+      const nextLabels = normalizeLabelArray(labels);
+      if (current && currentCategory === category && currentRoom === room && arraysEqual(currentLabels, nextLabels)) {
+        return { skipped: true };
+      }
 
       const result = await api(`/api/${domain}/${encodeURIComponent(id)}/meta`, {
         method: 'POST',
-        body: JSON.stringify({ category, labels, room, applyToHa: true }),
+        body: JSON.stringify({ category, labels: nextLabels, room, applyToHa: true }),
       });
 
-      if (result.data?.haError) {
-        showToast(`Saved locally. HA sync warning: ${result.data.haError}`);
-      } else if (result.data?.haApplied) {
-        showToast(`Metadata updated for ${id} and synced to HA`);
-      } else {
-        showToast(`Metadata updated for ${id}`);
+      if (!silent) {
+        if (result.data?.haError) {
+          showToast(`Saved locally. HA sync warning: ${result.data.haError}`);
+        } else if (result.data?.haApplied) {
+          showToast(`Metadata updated for ${id} and synced to HA`);
+        } else {
+          showToast(`Metadata updated for ${id}`);
+        }
       }
       await refresh();
+      return result.data || {};
+    }
+
+    async function autoSaveMeta(id, entityType = 'automation') {
+      const key = `${resolveEntityTypeFromId(id, entityType)}:${id}`;
+      if (!id || state.metaInFlight.has(key)) {
+        return;
+      }
+      state.metaInFlight.add(key);
+      try {
+        await saveMeta(id, entityType, { silent: true });
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        state.metaInFlight.delete(key);
+      }
     }
 
     async function quarantine(id, entityType = 'automation') {
@@ -1738,6 +1801,7 @@
               .map((chip) => chip.dataset.labelValue || '')
               .filter((value) => value && value !== (target.dataset.value || ''));
             renderLabelsInEditor(editor, remaining);
+            await autoSaveMeta(id, entityType);
           }
         }
         if (action === 'filter-category') applyFilter(target.dataset.filterScope || entityType, 'category', target.dataset.value || '');
@@ -1838,6 +1902,23 @@
       });
     }
 
+    function setupMetadataAutosave() {
+      const attach = (containerId, entityType) => {
+        const container = byId(containerId);
+        if (!container) return;
+
+        container.addEventListener('focusout', (event) => {
+          const input = event.target.closest('input[data-field="category"], input[data-field="room"]');
+          if (!input) return;
+          const id = String(input.dataset.id || '').trim();
+          autoSaveMeta(id, entityType).catch((error) => showToast(error.message));
+        });
+      };
+
+      attach('automations-body', 'automation');
+      attach('scripts-body', 'script');
+    }
+
     function setupLabelEditors() {
       const attach = (containerId) => {
         const container = byId(containerId);
@@ -1850,6 +1931,7 @@
           if (event.key === 'Enter' || event.key === ',') {
             event.preventDefault();
             commitLabelInput(input);
+            autoSaveMeta(String(input.dataset.id || '').trim(), resolveEntityTypeFromId(input.dataset.id || '')).catch((error) => showToast(error.message));
             return;
           }
 
@@ -1868,6 +1950,7 @@
           const input = event.target.closest('input[data-label-input]');
           if (!input) return;
           commitLabelInput(input);
+          autoSaveMeta(String(input.dataset.id || '').trim(), resolveEntityTypeFromId(input.dataset.id || '')).catch((error) => showToast(error.message));
         });
       };
 
@@ -1931,6 +2014,7 @@
     setupTabs();
     setupFilters();
     setupRawEditor();
+    setupMetadataAutosave();
     setupLabelEditors();
 
     refresh().catch((error) => {
