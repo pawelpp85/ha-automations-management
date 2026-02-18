@@ -22,14 +22,14 @@ app.use(express.static(path.join(__dirname, '../public')));
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
-    version: '1.0.0b15',
+    version: '1.0.0b16',
     startedAt: process.uptime(),
   });
 });
 
 app.get('/api/config', (_req, res) => {
   res.json({
-    version: '1.0.0b15',
+    version: '1.0.0b16',
     syncIntervalSeconds: options.sync_interval_seconds,
     remoteEnabled: options.remote_enabled,
   });

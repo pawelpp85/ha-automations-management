@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0b16 - 2026-02-18
+
+- Updated dark theme colors to be less purple and much darker.
+- Set UI elements/panels to near-black backgrounds.
+- Adjusted page background to black with subtle burgundy gradients.
+- Bumped add-on metadata version to `1.0.0b16`.
+
 ## 1.0.0b15 - 2026-02-18
 
 - UI updates:
