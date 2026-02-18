@@ -25,6 +25,51 @@ This add-on organizes Home Assistant automations and keeps a local Git-backed ba
 2. Verify import/quarantine/restore behavior.
 3. Enable remote push only after adding valid credentials.
 
+## Example Configuration for Private GitHub Repository
+
+### SSH (recommended)
+
+Use a dedicated deploy key with write access to the private repository.
+
+```yaml
+sync_interval_seconds: 300
+remote_enabled: true
+remote_url: "git@github.com:pawelpp85/ha-automations-management-backup.git"
+remote_branch: "main"
+remote_auth_mode: "ssh"
+remote_ssh_key: |
+  -----BEGIN OPENSSH PRIVATE KEY-----
+  <your-private-key-content>
+  -----END OPENSSH PRIVATE KEY-----
+remote_https_username: ""
+remote_https_token: ""
+git_user_name: "HA Automation Manager"
+git_user_email: "ha-automation-manager@local"
+```
+
+If your environment uses a custom SSH host alias (for example `github-nuc`), set URL like:
+
+```yaml
+remote_url: "git@github-nuc:pawelpp85/ha-automations-management-backup.git"
+```
+
+### HTTPS (PAT token)
+
+Use a GitHub Personal Access Token with repository write permissions.
+
+```yaml
+sync_interval_seconds: 300
+remote_enabled: true
+remote_url: "https://github.com/pawelpp85/ha-automations-management-backup.git"
+remote_branch: "main"
+remote_auth_mode: "https"
+remote_ssh_key: ""
+remote_https_username: "pawelpp85"
+remote_https_token: "github_pat_xxx"
+git_user_name: "HA Automation Manager"
+git_user_email: "ha-automation-manager@local"
+```
+
 ## Security Notes
 
 - Store secrets only in add-on options, never in repository files.

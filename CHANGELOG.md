@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0b4 - 2026-02-18
+
+- Added complete example configurations for private GitHub repositories in `addon/DOCS.md`.
+- Added both SSH and HTTPS token examples, including custom SSH host alias usage.
+- Bumped add-on metadata version to `1.0.0b4`.
+
 ## 1.0.0b3 - 2026-02-18
 
 - Added automated test suite for backend services (`store`, `git backup`, `automation service`).

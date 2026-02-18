@@ -1,6 +1,6 @@
 # HA Automations Management Add-on
 
-Version: `1.0.0b3`
+Version: `1.0.0b4`
 
 This repository contains the project definition for a Home Assistant add-on focused on automation organization, quarantine backup, and Git-based history.
 
@@ -29,7 +29,7 @@ This repository contains the project definition for a Home Assistant add-on focu
 
 ## Current Status
 
-Backend implementation and automated tests are available in beta iteration `1.0.0b3`. Frontend is currently minimal and will be expanded in the next beta.
+Backend implementation and automated tests are available in beta iteration `1.0.0b4`. Frontend is currently minimal and will be expanded in the next beta.
 
 ## Run Tests (Local Only)
 
