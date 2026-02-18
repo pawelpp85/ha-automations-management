@@ -4,6 +4,13 @@ const yaml = require('js-yaml');
 
 const AUTO_QUARANTINE_MISS_THRESHOLD = 3;
 const UUID_LIKE_PATTERN = /^[a-f0-9]{32}$/i;
+const SCRIPT_ENTITY_PATTERN = /^script\.[a-z0-9_]+$/i;
+const RESERVED_SCRIPT_SERVICE_IDS = new Set([
+  'script.turn_on',
+  'script.turn_off',
+  'script.toggle',
+  'script.reload',
+]);
 
 function addEntityFromString(value, collector, { allowDirectEntityId = false } = {}) {
   const text = String(value || '').trim();
@@ -75,6 +82,45 @@ function extractDeviceRefs(node, collector = new Set()) {
         extractDeviceRefs(value, collector);
       }
     }
+  }
+
+  return collector;
+}
+
+function addLinkedScriptRef(value, collector) {
+  const text = String(value || '').trim();
+  if (!text || !SCRIPT_ENTITY_PATTERN.test(text)) {
+    return;
+  }
+
+  const normalized = text.toLowerCase();
+  if (RESERVED_SCRIPT_SERVICE_IDS.has(normalized)) {
+    return;
+  }
+
+  collector.add(normalized);
+}
+
+function extractLinkedScriptRefs(node, collector = new Set()) {
+  if (Array.isArray(node)) {
+    node.forEach((entry) => extractLinkedScriptRefs(entry, collector));
+    return collector;
+  }
+
+  if (!node || typeof node !== 'object') {
+    return collector;
+  }
+
+  for (const [key, value] of Object.entries(node)) {
+    const keyName = String(key || '').toLowerCase();
+    if (keyName === 'action' || keyName === 'service') {
+      if (Array.isArray(value)) {
+        value.forEach((entry) => addLinkedScriptRef(entry, collector));
+      } else {
+        addLinkedScriptRef(value, collector);
+      }
+    }
+    extractLinkedScriptRefs(value, collector);
   }
 
   return collector;
@@ -395,9 +441,13 @@ class AutomationService {
       throw new Error('Backup YAML file is missing for selected automation.');
     }
 
-    const activeRelPath = this.gitBackup.relativeYamlPath('active', id);
-    const quarantineRelPath = this.gitBackup.relativeYamlPath('quarantine', id);
-    const historyRaw = this.gitBackup.listHistoryForPaths([activeRelPath, quarantineRelPath], 80);
+    const activeRelPaths = typeof this.gitBackup.relativeYamlPaths === 'function'
+      ? this.gitBackup.relativeYamlPaths('active', id)
+      : [this.gitBackup.relativeYamlPath('active', id)];
+    const quarantineRelPaths = typeof this.gitBackup.relativeYamlPaths === 'function'
+      ? this.gitBackup.relativeYamlPaths('quarantine', id)
+      : [this.gitBackup.relativeYamlPath('quarantine', id)];
+    const historyRaw = this.gitBackup.listHistoryForPaths([...activeRelPaths, ...quarantineRelPaths], 80);
     const seenCommits = new Set();
     const history = historyRaw.filter((entry) => {
       if (seenCommits.has(entry.commit)) {
@@ -422,25 +472,33 @@ class AutomationService {
       throw new Error('Commit hash is required.');
     }
 
-    const activeRelPath = this.gitBackup.relativeYamlPath('active', id);
-    const quarantineRelPath = this.gitBackup.relativeYamlPath('quarantine', id);
+    const activeRelPaths = typeof this.gitBackup.relativeYamlPaths === 'function'
+      ? this.gitBackup.relativeYamlPaths('active', id)
+      : [this.gitBackup.relativeYamlPath('active', id)];
+    const quarantineRelPaths = typeof this.gitBackup.relativeYamlPaths === 'function'
+      ? this.gitBackup.relativeYamlPaths('quarantine', id)
+      : [this.gitBackup.relativeYamlPath('quarantine', id)];
 
-    const activeText = this.gitBackup.readFileAtCommit(commit, activeRelPath);
-    if (activeText != null) {
-      return {
-        commit,
-        status: 'active',
-        yamlText: activeText,
-      };
+    for (const activeRelPath of activeRelPaths) {
+      const activeText = this.gitBackup.readFileAtCommit(commit, activeRelPath);
+      if (activeText != null) {
+        return {
+          commit,
+          status: 'active',
+          yamlText: activeText,
+        };
+      }
     }
 
-    const quarantineText = this.gitBackup.readFileAtCommit(commit, quarantineRelPath);
-    if (quarantineText != null) {
-      return {
-        commit,
-        status: 'quarantine',
-        yamlText: quarantineText,
-      };
+    for (const quarantineRelPath of quarantineRelPaths) {
+      const quarantineText = this.gitBackup.readFileAtCommit(commit, quarantineRelPath);
+      if (quarantineText != null) {
+        return {
+          commit,
+          status: 'quarantine',
+          yamlText: quarantineText,
+        };
+      }
     }
 
     throw new Error('Selected commit does not contain this automation YAML.');
@@ -751,8 +809,31 @@ class AutomationService {
 
   async buildDeviceView() {
     const output = {};
+    const knownEntities = this.listKnownEntities();
+    const entityById = new Map(
+      knownEntities.map((entry) => [normalizeAutomationId(entry.id), entry])
+    );
 
-    for (const record of this.listKnownEntities()) {
+    const pushEntity = (deviceEntry, entityRecord) => {
+      const entityId = normalizeAutomationId(entityRecord?.id);
+      if (!entityId || deviceEntry.automationIds.some((entry) => entry.id === entityId)) {
+        return;
+      }
+
+      deviceEntry.automationIds.push({
+        id: entityId,
+        entityType: this.resolveEntityType(entityRecord),
+        editId: entityRecord.editId || '',
+        alias: entityRecord.alias || entityId,
+        status: entityRecord.status,
+        haEnabled: entityRecord.haEnabled !== false,
+        category: entityRecord.category || '',
+        room: entityRecord.room || '',
+        labels: entityRecord.labels || [],
+      });
+    };
+
+    for (const record of knownEntities) {
       const status = record.status === 'quarantine' ? 'quarantine' : 'active';
       const yamlPath = this.gitBackup.yamlPath(status, record.id);
       if (!fs.existsSync(yamlPath)) {
@@ -766,7 +847,20 @@ class AutomationService {
         continue;
       }
 
-      const refs = [...extractDeviceRefs(parsed)];
+      const rawRefs = [...extractDeviceRefs(parsed)];
+      const scriptRefs = new Set([...extractLinkedScriptRefs(parsed)]);
+      const refs = rawRefs.filter((ref) => {
+        const normalized = String(ref || '').trim().toLowerCase();
+        if (!normalized) {
+          return false;
+        }
+        if (SCRIPT_ENTITY_PATTERN.test(normalized)) {
+          scriptRefs.add(normalized);
+          return false;
+        }
+        return true;
+      });
+
       const mappedKeysForRecord = new Set();
       for (const ref of refs) {
         if (!ref) {
@@ -817,17 +911,15 @@ class AutomationService {
             output[key].sourceDeviceIds = [...new Set(output[key].sourceDeviceIds)];
           }
 
-          output[key].automationIds.push({
-            id: record.id,
-            entityType: this.resolveEntityType(record),
-            editId: record.editId || '',
-            alias: record.alias || record.id,
-            status: record.status,
-            haEnabled: record.haEnabled !== false,
-            category: record.category || '',
-            room: record.room || '',
-            labels: record.labels || [],
-          });
+          pushEntity(output[key], record);
+
+          for (const linkedScriptId of scriptRefs) {
+            const linkedScript = entityById.get(linkedScriptId);
+            if (!linkedScript || this.resolveEntityType(linkedScript) !== 'script') {
+              continue;
+            }
+            pushEntity(output[key], linkedScript);
+          }
         }
       }
     }
@@ -877,4 +969,5 @@ class AutomationService {
 module.exports = {
   AutomationService,
   extractDeviceRefs,
+  extractLinkedScriptRefs,
 };

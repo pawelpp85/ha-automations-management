@@ -104,6 +104,19 @@ test('GitBackupService getDiff returns unified patch with line changes', () => {
   assert.ok(diff.includes('+alias: Diff view'));
 });
 
+test('GitBackupService writes scripts under scripts directory', () => {
+  const repoDir = tempDir('ha-am-repo-scripts-');
+  const backup = new GitBackupService(options(), repoDir);
+
+  const scriptPath = backup.writeYaml('active', 'script.air_purifier_off', {
+    alias: 'Air purifier off',
+    sequence: [],
+  });
+
+  assert.equal(scriptPath.includes(`${path.sep}scripts${path.sep}active${path.sep}`), true);
+  assert.equal(fs.existsSync(scriptPath), true);
+});
+
 test('GitBackupService rejects invalid base64 SSH key early', () => {
   const repoDir = tempDir('ha-am-repo-push-');
   const backup = new GitBackupService({

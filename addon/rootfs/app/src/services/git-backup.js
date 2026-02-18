@@ -8,8 +8,12 @@ class GitBackupService {
   constructor(options, repoDir = '/data/automation_backup_repo') {
     this.options = options;
     this.repoDir = repoDir;
-    this.activeDir = path.join(this.repoDir, 'automations/active');
-    this.quarantineDir = path.join(this.repoDir, 'automations/quarantine');
+    this.automationsActiveDir = path.join(this.repoDir, 'automations/active');
+    this.automationsQuarantineDir = path.join(this.repoDir, 'automations/quarantine');
+    this.scriptsActiveDir = path.join(this.repoDir, 'scripts/active');
+    this.scriptsQuarantineDir = path.join(this.repoDir, 'scripts/quarantine');
+    this.activeDir = this.automationsActiveDir;
+    this.quarantineDir = this.automationsQuarantineDir;
     this.metadataDir = path.join(this.repoDir, 'metadata');
     this.ensureRepo();
   }
@@ -57,8 +61,10 @@ class GitBackupService {
   }
 
   ensureRepo() {
-    ensureDir(this.activeDir);
-    ensureDir(this.quarantineDir);
+    ensureDir(this.automationsActiveDir);
+    ensureDir(this.automationsQuarantineDir);
+    ensureDir(this.scriptsActiveDir);
+    ensureDir(this.scriptsQuarantineDir);
     ensureDir(this.metadataDir);
 
     if (!fs.existsSync(path.join(this.repoDir, '.git'))) {
@@ -91,33 +97,87 @@ class GitBackupService {
     return String(automationId).replace(/[^a-zA-Z0-9_.-]/g, '_');
   }
 
+  resolveEntityType(entityId) {
+    return String(entityId || '').startsWith('script.') ? 'script' : 'automation';
+  }
+
+  resolveBaseDir(entityType, status) {
+    const isQuarantine = status === 'quarantine';
+    if (entityType === 'script') {
+      return isQuarantine ? this.scriptsQuarantineDir : this.scriptsActiveDir;
+    }
+    return isQuarantine ? this.automationsQuarantineDir : this.automationsActiveDir;
+  }
+
+  legacyScriptYamlPath(status, entityId) {
+    if (this.resolveEntityType(entityId) !== 'script') {
+      return null;
+    }
+    const fileName = `${this.normalizeId(entityId)}.yaml`;
+    const base = status === 'quarantine' ? this.automationsQuarantineDir : this.automationsActiveDir;
+    return path.join(base, fileName);
+  }
+
   yamlPath(status, automationId) {
     const fileName = `${this.normalizeId(automationId)}.yaml`;
-    const base = status === 'quarantine' ? this.quarantineDir : this.activeDir;
+    const entityType = this.resolveEntityType(automationId);
+    const base = this.resolveBaseDir(entityType, status);
     return path.join(base, fileName);
   }
 
   relativeYamlPath(status, automationId) {
-    return path.relative(this.repoDir, this.yamlPath(status, automationId)).split(path.sep).join('/');
+    const [first] = this.relativeYamlPaths(status, automationId);
+    return first || '';
+  }
+
+  relativeYamlPaths(status, automationId) {
+    const paths = [];
+    const primary = this.yamlPath(status, automationId);
+    if (primary) {
+      paths.push(path.relative(this.repoDir, primary).split(path.sep).join('/'));
+    }
+
+    const legacy = this.legacyScriptYamlPath(status, automationId);
+    if (legacy) {
+      const relativeLegacy = path.relative(this.repoDir, legacy).split(path.sep).join('/');
+      if (!paths.includes(relativeLegacy)) {
+        paths.push(relativeLegacy);
+      }
+    }
+
+    return paths;
   }
 
   fileExists(status, automationId) {
-    return fs.existsSync(this.yamlPath(status, automationId));
+    const primary = this.yamlPath(status, automationId);
+    if (fs.existsSync(primary)) {
+      return true;
+    }
+    const legacy = this.legacyScriptYamlPath(status, automationId);
+    return Boolean(legacy && fs.existsSync(legacy));
   }
 
   readYamlText(status, automationId) {
-    const targetPath = this.yamlPath(status, automationId);
-    if (!fs.existsSync(targetPath)) {
-      return null;
+    const primary = this.yamlPath(status, automationId);
+    if (fs.existsSync(primary)) {
+      return fs.readFileSync(primary, 'utf8');
     }
-
-    return fs.readFileSync(targetPath, 'utf8');
+    const legacy = this.legacyScriptYamlPath(status, automationId);
+    if (legacy && fs.existsSync(legacy)) {
+      return fs.readFileSync(legacy, 'utf8');
+    }
+    return null;
   }
 
   writeYamlText(status, automationId, yamlText) {
     const outputPath = this.yamlPath(status, automationId);
     const normalized = String(yamlText || '');
     atomicWrite(outputPath, normalized.endsWith('\n') ? normalized : `${normalized}\n`);
+
+    const legacy = this.legacyScriptYamlPath(status, automationId);
+    if (legacy && legacy !== outputPath && fs.existsSync(legacy)) {
+      removeIfExists(legacy);
+    }
     return outputPath;
   }
 
@@ -131,37 +191,52 @@ class GitBackupService {
     });
 
     atomicWrite(outputPath, serialized);
+
+    const legacy = this.legacyScriptYamlPath(status, automationId);
+    if (legacy && legacy !== outputPath && fs.existsSync(legacy)) {
+      removeIfExists(legacy);
+    }
     return outputPath;
   }
 
   moveToQuarantine(automationId) {
     const activePath = this.yamlPath('active', automationId);
     const quarantinePath = this.yamlPath('quarantine', automationId);
+    const legacyActivePath = this.legacyScriptYamlPath('active', automationId);
+    const sourcePath = fs.existsSync(activePath)
+      ? activePath
+      : (legacyActivePath && fs.existsSync(legacyActivePath) ? legacyActivePath : null);
 
-    if (fs.existsSync(activePath)) {
+    if (sourcePath) {
       ensureDir(path.dirname(quarantinePath));
-      fs.renameSync(activePath, quarantinePath);
+      fs.renameSync(sourcePath, quarantinePath);
       return quarantinePath;
     }
-
     return null;
   }
 
   moveToActive(automationId) {
     const activePath = this.yamlPath('active', automationId);
     const quarantinePath = this.yamlPath('quarantine', automationId);
+    const legacyQuarantinePath = this.legacyScriptYamlPath('quarantine', automationId);
+    const sourcePath = fs.existsSync(quarantinePath)
+      ? quarantinePath
+      : (legacyQuarantinePath && fs.existsSync(legacyQuarantinePath) ? legacyQuarantinePath : null);
 
-    if (fs.existsSync(quarantinePath)) {
+    if (sourcePath) {
       ensureDir(path.dirname(activePath));
-      fs.renameSync(quarantinePath, activePath);
+      fs.renameSync(sourcePath, activePath);
       return activePath;
     }
-
     return null;
   }
 
   deleteQuarantine(automationId) {
     removeIfExists(this.yamlPath('quarantine', automationId));
+    const legacy = this.legacyScriptYamlPath('quarantine', automationId);
+    if (legacy) {
+      removeIfExists(legacy);
+    }
   }
 
   writeMetadata(payload) {

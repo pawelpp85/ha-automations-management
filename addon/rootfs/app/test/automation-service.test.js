@@ -473,6 +473,62 @@ test('buildDeviceView includes scripts that reference entities', async () => {
   assert.ok(hall.automationIds.some((entry) => entry.id === 'script.night_light' && entry.entityType === 'script'));
 });
 
+test('buildDeviceView links called script to automation device_id relationship', async () => {
+  const storeDir = tempDir('ha-am-store-');
+  const repoDir = tempDir('ha-am-git-');
+  const store = new StoreService(storeDir);
+  const haClient = new FakeHaClient(
+    [
+      {
+        id: 'automation.air_purifier_off',
+        entity_id: 'automation.air_purifier_off',
+        alias: 'air purifier off',
+        raw_config: {
+          alias: 'air purifier off',
+          description: '',
+          triggers: [
+            {
+              domain: 'mqtt',
+              device_id: 'e358247b10d87c834b1d09391ae9867f',
+              type: 'action',
+              subtype: 'off_press',
+              trigger: 'device',
+            },
+          ],
+          conditions: [],
+          actions: [
+            {
+              data: {},
+              action: 'script.air_purifier_off',
+            },
+          ],
+          mode: 'single',
+        },
+      },
+    ],
+    [
+      {
+        id: 'script.air_purifier_off',
+        entity_id: 'script.air_purifier_off',
+        alias: 'air purifier off script',
+        raw_config: {
+          alias: 'air purifier off script',
+          sequence: [],
+        },
+      },
+    ]
+  );
+  const gitBackup = new FakeGitBackup(repoDir);
+  const service = new AutomationService({ store, haClient, gitBackup });
+  await service.importFromHa({ automaticCommit: false });
+
+  const devices = await service.buildDeviceView();
+  const target = devices.find((entry) => entry.deviceId === 'e358247b10d87c834b1d09391ae9867f');
+  assert.ok(target);
+  assert.ok(target.automationIds.some((entry) => entry.id === 'automation.air_purifier_off'));
+  assert.ok(target.automationIds.some((entry) => entry.id === 'script.air_purifier_off' && entry.entityType === 'script'));
+});
+
 test('validateRawYaml reports syntax errors and structural warnings', () => {
   const storeDir = tempDir('ha-am-store-');
   const repoDir = tempDir('ha-am-git-');
