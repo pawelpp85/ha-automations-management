@@ -54,3 +54,45 @@ test('HaClient resolveCategoryValue falls back to raw value when mapping is miss
   assert.equal(client.resolveCategoryValue(raw), raw);
 });
 
+class FakeWsClient {
+  constructor(handlers) {
+    this.handlers = handlers;
+  }
+
+  async request(type, payload = {}) {
+    if (!this.handlers[type]) {
+      throw new Error(`Unhandled ws request type in test: ${type}`);
+    }
+    return this.handlers[type](payload);
+  }
+
+  close() {}
+}
+
+test('HaClient listViaWsApi skips stale entity-registry automation without state/config', async () => {
+  const client = new HaClient();
+  client.createWsClient = async () => new FakeWsClient({
+    'config/entity_registry/list': async () => [
+      {
+        entity_id: 'automation.stale_automation',
+        unique_id: '123',
+      },
+    ],
+    'config/area_registry/list': async () => [],
+    'config/label_registry/list': async () => [],
+    'config/device_registry/list': async () => [],
+    'config/category_registry/list': async () => [],
+    'automation/config': async () => {
+      throw new Error('Entity not found');
+    },
+  });
+  client.request = async (requestPath) => {
+    if (requestPath === '/api/states') {
+      return [];
+    }
+    throw new Error(`Unexpected request path in test: ${requestPath}`);
+  };
+
+  const list = await client.listViaWsApi();
+  assert.equal(list.length, 0);
+});

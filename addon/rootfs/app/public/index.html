@@ -829,6 +829,11 @@
       renderRawSelect();
     }
 
+    function isStartupNotReadyError(error) {
+      const message = String(error?.message || '').toLowerCase();
+      return message.includes('initializing') || message.includes('try again in a few seconds');
+    }
+
     function renderWarnings() {
       const box = byId('warning-banner');
       if (!state.warnings.length) {
@@ -1451,7 +1456,20 @@
     setupRawEditor();
     setupLabelEditors();
 
-    refresh().catch((error) => showToast(error.message));
+    refresh().catch((error) => {
+      if (isStartupNotReadyError(error)) {
+        byId('repo-status').textContent = 'Service is initializing...';
+        window.setTimeout(() => {
+          refresh().catch((retryError) => {
+            if (!isStartupNotReadyError(retryError)) {
+              showToast(retryError.message);
+            }
+          });
+        }, 2000);
+        return;
+      }
+      showToast(error.message);
+    });
   </script>
 </body>
 </html>

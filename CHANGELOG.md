@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0b17 - 2026-02-18
+
+- Startup/ingress reliability:
+  - Server now starts listening immediately, while add-on services initialize in background.
+  - API endpoints return clear `503` initialization response until backend is ready.
+  - Added startup details to `/api/health`.
+  - Frontend now retries initial load when backend is still initializing.
+- Import reliability:
+  - WS import now skips stale automation entity-registry entries when both runtime state and config are missing.
+  - This prevents removed automations from reappearing due orphaned registry entries.
+- Added HA client test for stale registry entry skipping.
+- Bumped add-on metadata version to `1.0.0b17`.
+
 ## 1.0.0b16 - 2026-02-18
 
 - Updated dark theme colors to be less purple and much darker.

@@ -384,9 +384,11 @@ class HaClient {
       );
 
       const output = [];
+      let staleRegistrySkipped = 0;
 
       for (const entry of automationEntities) {
         let config = null;
+        let configNotFound = false;
 
         try {
           const payload = await client.request('automation/config', { entity_id: entry.entity_id });
@@ -400,6 +402,13 @@ class HaClient {
           if (!message.includes('entity not found') && !message.includes('not found')) {
             throw error;
           }
+          configNotFound = true;
+        }
+
+        const hasState = stateByEntityId.has(entry.entity_id);
+        if (configNotFound && !hasState) {
+          staleRegistrySkipped += 1;
+          continue;
         }
 
         const automationId = entry.entity_id;
@@ -451,6 +460,12 @@ class HaClient {
             action: [],
           },
         });
+      }
+
+      if (staleRegistrySkipped > 0) {
+        console.warn(
+          `Skipped ${staleRegistrySkipped} stale automation registry entries with missing state/config.`
+        );
       }
 
       return output;

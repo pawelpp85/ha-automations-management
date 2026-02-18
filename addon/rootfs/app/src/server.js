@@ -12,8 +12,48 @@ const { AutomationService } = require('./services/automation-service');
 const options = readOptions();
 const store = new StoreService();
 const haClient = new HaClient();
-const gitBackup = new GitBackupService(options);
-const automationService = new AutomationService({ store, haClient, gitBackup });
+let gitBackup = null;
+let automationService = null;
+let startupState = {
+  serviceReady: false,
+  serviceInitializing: false,
+  initialImportRunning: false,
+  initialImportCompleted: false,
+  initError: '',
+};
+
+function getAutomationServiceOrReply(res) {
+  if (!automationService) {
+    res.status(503).json({
+      error: 'Service is still initializing. Try again in a few seconds.',
+      startup: startupState,
+    });
+    return null;
+  }
+
+  return automationService;
+}
+
+function initializeServices() {
+  if (automationService || startupState.serviceInitializing) {
+    return;
+  }
+
+  startupState.serviceInitializing = true;
+  startupState.initError = '';
+
+  try {
+    gitBackup = new GitBackupService(options);
+    automationService = new AutomationService({ store, haClient, gitBackup });
+    startupState.serviceReady = true;
+  } catch (error) {
+    startupState.initError = String(error?.message || 'Unknown initialization error');
+    startupState.serviceReady = false;
+    console.error('Service initialization failed:', startupState.initError);
+  } finally {
+    startupState.serviceInitializing = false;
+  }
+}
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -22,28 +62,35 @@ app.use(express.static(path.join(__dirname, '../public')));
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
-    version: '1.0.0b16',
+    version: '1.0.0b17',
     startedAt: process.uptime(),
+    startup: startupState,
   });
 });
 
 app.get('/api/config', (_req, res) => {
   res.json({
-    version: '1.0.0b16',
+    version: '1.0.0b17',
     syncIntervalSeconds: options.sync_interval_seconds,
     remoteEnabled: options.remote_enabled,
   });
 });
 
 app.get('/api/automations', (_req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
   res.json({
-    data: automationService.listAutomations(),
+    data: service.listAutomations(),
   });
 });
 
 app.get('/api/devices', async (_req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
   try {
-    const data = await automationService.buildDeviceView();
+    const data = await service.buildDeviceView();
     res.json({ data });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -51,14 +98,20 @@ app.get('/api/devices', async (_req, res) => {
 });
 
 app.get('/api/warnings', (_req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
   res.json({
-    data: automationService.listWarnings(),
+    data: service.listWarnings(),
   });
 });
 
 app.delete('/api/warnings/:id', (req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
   try {
-    const data = automationService.clearWarning(req.params.id);
+    const data = service.clearWarning(req.params.id);
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -66,8 +119,11 @@ app.delete('/api/warnings/:id', (req, res) => {
 });
 
 app.delete('/api/warnings', (_req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
   try {
-    const data = automationService.clearWarnings();
+    const data = service.clearWarnings();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -75,8 +131,11 @@ app.delete('/api/warnings', (_req, res) => {
 });
 
 app.get('/api/raw/:id', (req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
   try {
-    const data = automationService.getRawConfiguration(req.params.id);
+    const data = service.getRawConfiguration(req.params.id);
     res.json({ data });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -84,8 +143,11 @@ app.get('/api/raw/:id', (req, res) => {
 });
 
 app.get('/api/raw/:id/history/:commit', (req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
   try {
-    const data = automationService.getRawConfigurationVersion(req.params.id, req.params.commit);
+    const data = service.getRawConfigurationVersion(req.params.id, req.params.commit);
     res.json({ data });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -93,8 +155,11 @@ app.get('/api/raw/:id/history/:commit', (req, res) => {
 });
 
 app.post('/api/raw/validate', (req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
   try {
-    const data = automationService.validateRawYaml(req.body || {});
+    const data = service.validateRawYaml(req.body || {});
     res.json({ data });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -102,8 +167,11 @@ app.post('/api/raw/validate', (req, res) => {
 });
 
 app.post('/api/raw/:id', async (req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
   try {
-    const data = await automationService.updateRawConfiguration(req.params.id, req.body || {});
+    const data = await service.updateRawConfiguration(req.params.id, req.body || {});
     res.json({ data });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -111,8 +179,11 @@ app.post('/api/raw/:id', async (req, res) => {
 });
 
 app.post('/api/import', async (_req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
   try {
-    const result = await automationService.importFromHa({ automaticCommit: true });
+    const result = await service.importFromHa({ automaticCommit: true });
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -120,8 +191,11 @@ app.post('/api/import', async (_req, res) => {
 });
 
 app.post('/api/sync', async (_req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
   try {
-    const result = await automationService.importFromHa({ automaticCommit: true });
+    const result = await service.importFromHa({ automaticCommit: true });
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -129,8 +203,11 @@ app.post('/api/sync', async (_req, res) => {
 });
 
 app.post('/api/automations/:id/meta', async (req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
   try {
-    const updated = await automationService.updateMetadata(req.params.id, req.body || {});
+    const updated = await service.updateMetadata(req.params.id, req.body || {});
     res.json({ data: updated });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -138,8 +215,11 @@ app.post('/api/automations/:id/meta', async (req, res) => {
 });
 
 app.post('/api/automations/:id/quarantine', async (req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
   try {
-    const updated = await automationService.quarantineAutomation(req.params.id, {
+    const updated = await service.quarantineAutomation(req.params.id, {
       confirmed: Boolean(req.body?.confirmed),
     });
 
@@ -150,8 +230,11 @@ app.post('/api/automations/:id/quarantine', async (req, res) => {
 });
 
 app.post('/api/quarantine/:id/restore', async (req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
   try {
-    const updated = await automationService.restoreAutomation(req.params.id);
+    const updated = await service.restoreAutomation(req.params.id);
     res.json({ data: updated });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -159,8 +242,11 @@ app.post('/api/quarantine/:id/restore', async (req, res) => {
 });
 
 app.delete('/api/quarantine/:id', (req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
   try {
-    const result = automationService.deleteFromQuarantine(req.params.id, {
+    const result = service.deleteFromQuarantine(req.params.id, {
       confirmed: req.query.confirmed === 'true',
     });
 
@@ -171,8 +257,11 @@ app.delete('/api/quarantine/:id', (req, res) => {
 });
 
 app.post('/api/git/commit', (req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
   try {
-    const result = automationService.commit(req.body?.message);
+    const result = service.commit(req.body?.message);
     res.json(result);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -180,8 +269,11 @@ app.post('/api/git/commit', (req, res) => {
 });
 
 app.get('/api/git/status', (_req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
   try {
-    const result = automationService.gitStatus();
+    const result = service.gitStatus();
     res.json({ data: result });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -189,8 +281,11 @@ app.get('/api/git/status', (_req, res) => {
 });
 
 app.post('/api/git/push', (_req, res) => {
+  const service = getAutomationServiceOrReply(res);
+  if (!service) return;
+
   try {
-    const result = automationService.push();
+    const result = service.push();
     res.json(result);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -204,14 +299,31 @@ app.get('*', (_req, res) => {
 const port = 8099;
 app.listen(port, async () => {
   console.log(`HA Automations Management listening on :${port}`);
-
-  try {
-    await automationService.importFromHa({ automaticCommit: true });
-  } catch (error) {
-    console.error('Initial import failed:', error.message);
+  initializeServices();
+  if (!automationService) {
+    return;
   }
 
+  startupState.initialImportRunning = true;
+  (async () => {
+    try {
+      await automationService.importFromHa({ automaticCommit: true });
+    } catch (error) {
+      console.error('Initial import failed:', error.message);
+    } finally {
+      startupState.initialImportRunning = false;
+      startupState.initialImportCompleted = true;
+    }
+  })();
+
   setInterval(async () => {
+    if (!automationService) {
+      initializeServices();
+      if (!automationService) {
+        return;
+      }
+    }
+
     try {
       await automationService.importFromHa({ automaticCommit: true });
     } catch (error) {
