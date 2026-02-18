@@ -39,6 +39,8 @@ class AutomationService {
     const automations = await this.haClient.listAutomations();
     const seenIds = new Set();
     let importedCount = 0;
+    let failedCount = 0;
+    let autoQuarantinedCount = 0;
 
     for (const automation of automations) {
       const automationId = automation.id || automation.entity_id;
@@ -46,30 +48,35 @@ class AutomationService {
         continue;
       }
 
-      seenIds.add(automationId);
+      try {
+        seenIds.add(automationId);
 
-      const config = (await this.haClient.getAutomationConfig(automationId)) || automation.raw_config || automation;
-      const yamlHash = this.buildYamlHash(config);
-      const existing = this.store.getAutomation(automationId);
-      const previouslyMissing = existing && existing.status === 'quarantine' && existing.autoQuarantined;
+        const config = (await this.haClient.getAutomationConfig(automationId)) || automation.raw_config || automation;
+        const yamlHash = this.buildYamlHash(config);
+        const existing = this.store.getAutomation(automationId);
+        const previouslyMissing = existing && existing.status === 'quarantine' && existing.autoQuarantined;
 
-      this.gitBackup.writeYaml('active', automationId, config);
+        this.gitBackup.writeYaml('active', automationId, config);
 
-      this.store.upsertAutomation(automationId, {
-        id: automationId,
-        alias: automation.alias || automation.name || automationId,
-        yamlHash,
-        lastImportedAt: new Date().toISOString(),
-        lastSeenInHa: new Date().toISOString(),
-        status: 'active',
-        autoQuarantined: false,
-        category: existing?.category || '',
-        labels: existing?.labels || [],
-        room: existing?.room || '',
-      });
+        this.store.upsertAutomation(automationId, {
+          id: automationId,
+          alias: automation.alias || automation.name || automationId,
+          yamlHash,
+          lastImportedAt: new Date().toISOString(),
+          lastSeenInHa: new Date().toISOString(),
+          status: 'active',
+          autoQuarantined: false,
+          category: existing?.category || '',
+          labels: existing?.labels || [],
+          room: existing?.room || '',
+        });
 
-      if (!existing || existing.yamlHash !== yamlHash || previouslyMissing) {
-        importedCount += 1;
+        if (!existing || existing.yamlHash !== yamlHash || previouslyMissing) {
+          importedCount += 1;
+        }
+      } catch (error) {
+        failedCount += 1;
+        console.warn(`Skipping automation ${automationId} due to import error:`, error.message);
       }
     }
 
@@ -84,6 +91,7 @@ class AutomationService {
 
         this.gitBackup.moveToQuarantine(record.id);
         this.store.addWarning(`Automation ${record.id} disappeared from Home Assistant and was moved to quarantine.`);
+        autoQuarantinedCount += 1;
       }
     }
 
@@ -91,13 +99,27 @@ class AutomationService {
     this.gitBackup.writeMetadata(this.store.state);
 
     let autoCommit = null;
-    if (automaticCommit && importedCount > 0) {
-      autoCommit = this.gitBackup.commit(`chore(sync): auto-import automations (${importedCount})`);
+    if (automaticCommit) {
+      autoCommit = this.gitBackup.commit(
+        `chore(sync): import changed=${importedCount}, quarantined=${autoQuarantinedCount}, failed=${failedCount}`
+      );
     }
+
+    const tracked = this.store.listAutomations();
+    const activeCount = tracked.filter((entry) => entry.status === 'active').length;
+    const quarantineCount = tracked.filter((entry) => entry.status === 'quarantine').length;
+
+    console.log(
+      `Import summary: discovered=${automations.length}, changed=${importedCount}, failed=${failedCount}, active=${activeCount}, quarantine=${quarantineCount}`
+    );
 
     return {
       importedCount,
       total: automations.length,
+      failedCount,
+      activeCount,
+      quarantineCount,
+      trackedCount: tracked.length,
       autoCommit,
     };
   }

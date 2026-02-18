@@ -16,7 +16,11 @@ class HaHttpError extends Error {
 }
 
 function isEndpointMissing(error) {
-  return error instanceof HaHttpError && (error.status === 404 || error.status === 405);
+  if (error instanceof HaHttpError) {
+    return error.status === 404 || error.status === 405;
+  }
+  const message = String(error?.message || '');
+  return message.includes('404') || message.includes('405');
 }
 
 function isUnknownWsCommand(error) {
@@ -44,6 +48,7 @@ class HaClient {
     this.warnedUnsupportedWsApi = false;
     this.warnedUnsupportedListApi = false;
     this.warnedUnsupportedItemApi = false;
+    this.warnedDedicatedConfigError = false;
 
     this.cachedConfigs = new Map();
     this.entityIdByAutomationId = new Map();
@@ -402,7 +407,10 @@ class HaClient {
         return null;
       }
 
-      console.warn(`Could not fetch dedicated config for ${automationId}:`, error.message);
+      if (!this.warnedDedicatedConfigError) {
+        console.warn('Could not fetch dedicated automation config; using fallback data only.', error.message);
+        this.warnedDedicatedConfigError = true;
+      }
       return null;
     }
   }

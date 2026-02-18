@@ -1,3 +1,6 @@
+const { installConsoleTimestampPrefix } = require('./lib/logger');
+installConsoleTimestampPrefix();
+
 const path = require('path');
 const express = require('express');
 const { readOptions } = require('./lib/options');
@@ -19,14 +22,14 @@ app.use(express.static(path.join(__dirname, '../public')));
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
-    version: '1.0.0b7',
+    version: '1.0.0b8',
     startedAt: process.uptime(),
   });
 });
 
 app.get('/api/config', (_req, res) => {
   res.json({
-    version: '1.0.0b7',
+    version: '1.0.0b8',
     syncIntervalSeconds: options.sync_interval_seconds,
     remoteEnabled: options.remote_enabled,
   });

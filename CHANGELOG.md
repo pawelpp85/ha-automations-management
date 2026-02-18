@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0b8 - 2026-02-18
+
+- Added log time prefix (`HH:MM:SS.mmm`, no date) for backend logs.
+- Hardened missing-endpoint detection for HA automation config API (`404/405`) to stop per-automation log spam.
+- Added resilient import loop: single automation import failure no longer aborts full import.
+- Added clear import summary logs and API fields (`discovered`, `changed`, `failed`, `active`, `quarantine`, `tracked`).
+- Updated UI sync/import toast messages to show discovered/changed/failed counts.
+- Bumped add-on metadata version to `1.0.0b8`.
+
 ## 1.0.0b7 - 2026-02-18
 
 - Reworked Home Assistant communication using websocket-first strategy (`/api/websocket`) modeled after `z2m_proxies_checkout`.

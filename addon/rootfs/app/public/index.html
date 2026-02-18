@@ -612,7 +612,9 @@
       setBusy('import', true);
       try {
         const result = await api('/api/import', { method: 'POST' });
-        showToast(`Import done: ${result.importedCount || 0} changed`);
+        showToast(
+          `Import done: changed=${result.importedCount || 0}, discovered=${result.total || 0}, failed=${result.failedCount || 0}`
+        );
         await refresh();
       } catch (error) {
         showToast(error.message);
@@ -625,7 +627,9 @@
       setBusy('sync', true);
       try {
         const result = await api('/api/sync', { method: 'POST' });
-        showToast(`Sync done: ${result.importedCount || 0} changed`);
+        showToast(
+          `Sync done: changed=${result.importedCount || 0}, discovered=${result.total || 0}, failed=${result.failedCount || 0}`
+        );
         await refresh();
       } catch (error) {
         showToast(error.message);
