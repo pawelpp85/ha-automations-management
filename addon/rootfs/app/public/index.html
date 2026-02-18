@@ -303,6 +303,21 @@
       font-weight: 700;
     }
 
+    .device-link {
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      padding: 0;
+      margin: 0;
+      text-align: left;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    .device-link small {
+      color: var(--muted);
+    }
+
     .device-links {
       margin-top: 0.55rem;
       display: flex;
@@ -329,6 +344,13 @@
       border-left: 1px solid var(--line);
       background: linear-gradient(180deg, rgba(207, 111, 141, 0.22), rgba(141, 41, 68, 0.14));
       color: color-mix(in srgb, var(--accent-2) 72%, var(--text));
+      font-weight: 600;
+    }
+
+    .device-automation .quarantine {
+      border-left: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(217, 164, 65, 0.2), rgba(217, 164, 65, 0.08));
+      color: color-mix(in srgb, var(--warn) 72%, var(--text));
       font-weight: 600;
     }
 
@@ -783,6 +805,30 @@
       renderQuarantine();
     }
 
+    function matchesTokenQuery(text, query) {
+      const normalizedText = String(text || '').toLowerCase();
+      const tokens = String(query || '')
+        .toLowerCase()
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+
+      if (!tokens.length) {
+        return true;
+      }
+
+      let cursor = 0;
+      for (const token of tokens) {
+        const index = normalizedText.indexOf(token, cursor);
+        if (index === -1) {
+          return false;
+        }
+        cursor = index + token.length;
+      }
+
+      return true;
+    }
+
     function openAutomationEditTab(editId, fallbackId) {
       const target = String(editId || '').trim() || String(fallbackId || '').trim();
       if (!target) {
@@ -791,6 +837,17 @@
       }
 
       const url = `${window.location.origin}/config/automation/edit/${encodeURIComponent(target)}`;
+      window.open(url, '_blank', 'noopener');
+    }
+
+    function openDeviceTab(deviceId) {
+      const target = String(deviceId || '').trim();
+      if (!target) {
+        showToast('No Home Assistant device_id available for this entry.');
+        return;
+      }
+
+      const url = `${window.location.origin}/config/devices/device/${encodeURIComponent(target)}`;
       window.open(url, '_blank', 'noopener');
     }
 
@@ -882,10 +939,10 @@
         ? 'quarantine'
         : (item.haEnabled === false ? 'disabled' : 'active');
 
-      return (!n || nameText.includes(n))
-        && (!c || category.includes(c))
-        && (!l || labels.includes(l))
-        && (!r || room.includes(r))
+      return matchesTokenQuery(nameText, n)
+        && matchesTokenQuery(category, c)
+        && matchesTokenQuery(labels, l)
+        && matchesTokenQuery(room, r)
         && (!s || status === s);
     }
 
@@ -963,11 +1020,8 @@
 
       const deviceFilter = state.filters.device.trim().toLowerCase();
       const visibleDevices = state.devices.filter((device) => {
-        if (!deviceFilter) {
-          return true;
-        }
         const text = `${device.deviceName || ''} ${device.deviceId || ''} ${(device.sourceDeviceIds || []).join(' ')}`.toLowerCase();
-        return text.includes(deviceFilter);
+        return matchesTokenQuery(text, deviceFilter);
       });
 
       if (!visibleDevices.length) {
@@ -978,11 +1032,11 @@
       list.innerHTML = visibleDevices.map((device) => `
         <div class="device-card">
           <div class="device-title">
-            <span>
+            <button class="device-link" data-action="open-device" data-device-id="${escapeHtml((device.sourceDeviceIds || [])[0] || '')}" title="Open Home Assistant device page in new tab.">
               ${escapeHtml(device.deviceName || device.deviceId)}
               ${device.deviceName && device.deviceName !== device.deviceId ? `<br><small>${escapeHtml(device.deviceId)}</small>` : ''}
               ${Array.isArray(device.sourceDeviceIds) && device.sourceDeviceIds.length ? `<br><small>device_id: ${escapeHtml(device.sourceDeviceIds.join(', '))}</small>` : ''}
-            </span>
+            </button>
             <span class="chip">${device.automationIds.length} automations</span>
           </div>
           <div class="device-links">
@@ -992,6 +1046,7 @@
                   ${escapeHtml(a.alias || a.id)} (${escapeHtml(a.status === 'quarantine' ? 'quarantine' : (a.haEnabled === false ? 'disabled' : 'active'))})
                 </button>
                 <button class="history" data-action="open-raw" data-id="${escapeHtml(a.id)}" title="Open raw configuration history.">History</button>
+                <button class="quarantine" data-action="quarantine" data-id="${escapeHtml(a.id)}" ${a.status === 'quarantine' ? 'disabled' : ''} title="Move automation to quarantine.">Quarantine</button>
               </span>
             `).join('')}
           </div>
@@ -1297,6 +1352,7 @@
 
       const run = async () => {
         if (action === 'open-edit') openAutomationEditTab(editId, id);
+        if (action === 'open-device') openDeviceTab(target.dataset.deviceId || '');
         if (action === 'open-raw') await openRawForAutomation(id);
         if (action === 'save-meta') await saveMeta(id);
         if (action === 'quarantine') await quarantine(id);

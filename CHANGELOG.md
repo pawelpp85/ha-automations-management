@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0b19 - 2026-02-18
+
+- Improved filter matching in UI:
+  - spaces in filter queries now act like flexible separators (`hall front` matches `hall_front`, `hall-front`, etc.).
+  - applied to automation and devices filters.
+- Devices view:
+  - added `Quarantine` action next to `History` per automation.
+  - changed default sort order to show devices with the highest number of linked automations first.
+  - clicking device name now opens Home Assistant device page in a new tab.
+- Added regression test for device sorting by automation count.
+- Fixed device reference parser to avoid treating service names (for example `light.turn_on`) as device/entity references.
+- Bumped add-on metadata version to `1.0.0b19`.
+
 ## 1.0.0b18 - 2026-02-18
 
 - Added `Permanent delete` action directly in main `Automations` table for rows already in `quarantine`.

@@ -5,13 +5,13 @@ const yaml = require('js-yaml');
 const AUTO_QUARANTINE_MISS_THRESHOLD = 3;
 const UUID_LIKE_PATTERN = /^[a-f0-9]{32}$/i;
 
-function addEntityFromString(value, collector) {
+function addEntityFromString(value, collector, { allowDirectEntityId = false } = {}) {
   const text = String(value || '').trim();
   if (!text) {
     return;
   }
 
-  if (/^[a-z0-9_]+\.[a-z0-9_]+$/i.test(text)) {
+  if (allowDirectEntityId && /^[a-z0-9_]+\.[a-z0-9_]+$/i.test(text)) {
     collector.add(text);
     return;
   }
@@ -42,7 +42,7 @@ function extractDeviceRefs(node, collector = new Set()) {
   }
 
   if (typeof node === 'string') {
-    addEntityFromString(node, collector);
+    addEntityFromString(node, collector, { allowDirectEntityId: false });
     return collector;
   }
 
@@ -58,7 +58,7 @@ function extractDeviceRefs(node, collector = new Set()) {
                 collector.add(candidate);
               }
             } else {
-              addEntityFromString(item, collector);
+              addEntityFromString(item, collector, { allowDirectEntityId: true });
             }
           });
         } else if (value) {
@@ -68,7 +68,7 @@ function extractDeviceRefs(node, collector = new Set()) {
               collector.add(candidate);
             }
           } else {
-            addEntityFromString(value, collector);
+            addEntityFromString(value, collector, { allowDirectEntityId: true });
           }
         }
       } else {
@@ -709,7 +709,15 @@ class AutomationService {
         ...item,
         automationIds: item.automationIds.sort((a, b) => (a.alias || a.id).localeCompare(b.alias || b.id)),
       }))
-      .sort((a, b) => a.deviceId.localeCompare(b.deviceId));
+      .sort((a, b) => {
+        const countDiff = Number(b.automationIds?.length || 0) - Number(a.automationIds?.length || 0);
+        if (countDiff !== 0) {
+          return countDiff;
+        }
+        const aName = String(a.deviceName || a.deviceId || '');
+        const bName = String(b.deviceName || b.deviceId || '');
+        return aName.localeCompare(bName);
+      });
   }
 
   commit(message) {

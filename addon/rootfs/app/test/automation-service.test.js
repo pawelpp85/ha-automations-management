@@ -295,6 +295,42 @@ test('buildDeviceView maps UUID device_id values to entity_ids', async () => {
   assert.deepEqual(target.sourceDeviceIds, ['0163d78db1e36467e298496641d861c3']);
 });
 
+test('buildDeviceView sorts devices by automation count descending', async () => {
+  const storeDir = tempDir('ha-am-store-');
+  const repoDir = tempDir('ha-am-git-');
+  const store = new StoreService(storeDir);
+  const haClient = new FakeHaClient([
+    {
+      id: 'automation.one',
+      entity_id: 'automation.one',
+      alias: 'One',
+      raw_config: {
+        alias: 'One',
+        trigger: [{ platform: 'state', entity_id: 'sensor.dev_a' }],
+        action: [{ service: 'light.turn_on', target: { entity_id: 'light.dev_a' } }],
+      },
+    },
+    {
+      id: 'automation.two',
+      entity_id: 'automation.two',
+      alias: 'Two',
+      raw_config: {
+        alias: 'Two',
+        trigger: [{ platform: 'state', entity_id: 'sensor.dev_a' }],
+        action: [{ service: 'light.turn_on', target: { entity_id: 'light.dev_b' } }],
+      },
+    },
+  ]);
+  const gitBackup = new FakeGitBackup(repoDir);
+  const service = new AutomationService({ store, haClient, gitBackup });
+  await service.importFromHa({ automaticCommit: false });
+
+  const list = await service.buildDeviceView();
+  assert.ok(list.length >= 2);
+  assert.equal(list[0].deviceId, 'sensor.dev_a');
+  assert.equal(list[0].automationIds.length, 2);
+});
+
 test('validateRawYaml reports syntax errors and structural warnings', () => {
   const storeDir = tempDir('ha-am-store-');
   const repoDir = tempDir('ha-am-git-');
