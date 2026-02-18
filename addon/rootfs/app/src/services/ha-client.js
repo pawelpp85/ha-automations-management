@@ -28,6 +28,22 @@ function isEndpointMissing(error) {
   return message.includes('404') || message.includes('405');
 }
 
+function isResourceNotFound(error) {
+  if (error instanceof HaHttpError) {
+    if (error.status === 400 || error.status === 404) {
+      const body = String(error.bodyText || '').toLowerCase();
+      if (body.includes('resource not found') || body.includes('entity not found') || body.includes('not found')) {
+        return true;
+      }
+    }
+  }
+
+  const message = String(error?.message || '').toLowerCase();
+  return message.includes('resource not found')
+    || message.includes('entity not found')
+    || message.includes('not found');
+}
+
 function isUnknownWsCommand(error) {
   const message = String(error?.message || '').toLowerCase();
   return message.includes('unknown command') || message.includes('unknown_command');
@@ -839,26 +855,60 @@ class HaClient {
   }
 
   async upsertByDomain(entityId, config, domain) {
-    const safeId = encodeURIComponent(entityId);
+    const normalizedEntityId = String(entityId || '').trim();
+    const strippedId = normalizedEntityId.startsWith(`${domain}.`)
+      ? normalizedEntityId.slice(domain.length + 1)
+      : normalizedEntityId;
+    const itemIdCandidates = [...new Set([
+      normalizedEntityId,
+      strippedId,
+    ].filter(Boolean))];
 
-    try {
-      return await this.request(`/api/config/${domain}/config/${safeId}`, {
-        method: 'POST',
-        body: JSON.stringify(config),
-      });
-    } catch (error) {
-      if (isEndpointMissing(error)) {
-        throw new Error(`Your Home Assistant does not expose ${domain} config write API. Restore is not available in this mode.`);
+    let lastError = null;
+
+    // Try dedicated endpoint first with multiple id forms.
+    for (const candidateId of itemIdCandidates) {
+      try {
+        return await this.request(`/api/config/${domain}/config/${encodeURIComponent(candidateId)}`, {
+          method: 'POST',
+          body: JSON.stringify(config),
+        });
+      } catch (error) {
+        lastError = error;
+        // Resource-not-found and endpoint-missing should both fallback to global create endpoint.
+        if (isResourceNotFound(error) || isEndpointMissing(error)) {
+          continue;
+        }
       }
-
-      return this.request(`/api/config/${domain}/config`, {
-        method: 'POST',
-        body: JSON.stringify({
-          id: entityId,
-          ...config,
-        }),
-      });
     }
+
+    const basePayload = (config && typeof config === 'object' && !Array.isArray(config)) ? { ...config } : {};
+    const explicitConfigId = String(basePayload.id || '').trim();
+    const createIdCandidates = [...new Set([
+      explicitConfigId,
+      strippedId,
+      normalizedEntityId,
+    ].filter(Boolean))];
+
+    // Fallback create endpoint; retry with alternate id forms.
+    for (const createId of createIdCandidates) {
+      try {
+        return await this.request(`/api/config/${domain}/config`, {
+          method: 'POST',
+          body: JSON.stringify({
+            ...basePayload,
+            id: createId,
+          }),
+        });
+      } catch (error) {
+        lastError = error;
+        if (isEndpointMissing(error)) {
+          throw new Error(`Your Home Assistant does not expose ${domain} config write API. Restore is not available in this mode.`);
+        }
+      }
+    }
+
+    throw lastError || new Error(`Failed to restore ${domain} ${normalizedEntityId} in Home Assistant.`);
   }
 
   async upsertAutomation(automationId, config) {

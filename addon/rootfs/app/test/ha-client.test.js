@@ -135,3 +135,42 @@ test('HaClient updateEntityMetadata creates missing room/label/category before a
   assert.deepEqual(updatePayload.labels, ['label_new']);
   assert.equal(updatePayload.categories.automation, 'category_new');
 });
+
+test('HaClient upsertAutomation falls back to create endpoint with stripped id when item endpoint is missing resource', async () => {
+  const client = new HaClient();
+  const calls = [];
+
+  client.request = async (requestPath, options = {}) => {
+    calls.push({ requestPath, options });
+
+    if (requestPath === '/api/config/automation/config/automation.suzi_started_cleaning') {
+      const error = new Error('HA request failed (400) /api/config/automation/config/automation.suzi_started_cleaning: {"message":"Resource not found"}');
+      error.status = 400;
+      throw error;
+    }
+
+    if (requestPath === '/api/config/automation/config/suzi_started_cleaning') {
+      const error = new Error('HA request failed (400) /api/config/automation/config/suzi_started_cleaning: {"message":"Resource not found"}');
+      error.status = 400;
+      throw error;
+    }
+
+    if (requestPath === '/api/config/automation/config') {
+      return { ok: true, body: JSON.parse(options.body || '{}') };
+    }
+
+    throw new Error(`Unexpected request path in upsert test: ${requestPath}`);
+  };
+
+  const result = await client.upsertAutomation('automation.suzi_started_cleaning', {
+    alias: 'Suzi started cleaning',
+    trigger: [],
+    action: [],
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.body.id, 'suzi_started_cleaning');
+
+  const itemPostCalls = calls.filter((entry) => entry.requestPath.startsWith('/api/config/automation/config/') && entry.requestPath !== '/api/config/automation/config');
+  assert.equal(itemPostCalls.length >= 1, true);
+});

@@ -62,7 +62,7 @@ app.use(express.static(path.join(__dirname, '../public')));
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
-    version: '1.0.1',
+    version: '1.0.2',
     startedAt: process.uptime(),
     startup: startupState,
   });
@@ -70,7 +70,7 @@ app.get('/api/health', (_req, res) => {
 
 app.get('/api/config', (_req, res) => {
   res.json({
-    version: '1.0.1',
+    version: '1.0.2',
     syncIntervalSeconds: options.sync_interval_seconds,
     remoteEnabled: options.remote_enabled,
   });
