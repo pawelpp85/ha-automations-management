@@ -408,6 +408,21 @@
       padding: 0.38rem 0.6rem;
     }
 
+    .entity-open {
+      border: 0;
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      margin: 0;
+      text-align: left;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    .entity-open small {
+      color: var(--muted);
+    }
+
     .status {
       display: inline-flex;
       align-items: center;
@@ -647,6 +662,7 @@
       warnings: [],
       inFlight: new Set(),
       gitHasChanges: false,
+      gitHasPendingPush: false,
       filters: { name: '', category: '', label: '', room: '', status: '', device: '' },
       scriptFilters: { name: '', category: '', label: '', room: '' },
       sorting: { automations: 'name', scripts: 'name' },
@@ -696,7 +712,7 @@
       else state.inFlight.delete(key);
       const isBusy = state.inFlight.size > 0;
       byId('btn-import').disabled = isBusy;
-      byId('btn-push').disabled = isBusy;
+      byId('btn-push').disabled = isBusy || !state.gitHasPendingPush;
       byId('btn-commit').disabled = isBusy || !state.gitHasChanges;
     }
 
@@ -916,7 +932,7 @@
         api('/api/scripts'),
         api('/api/devices'),
         api('/api/warnings'),
-        api('/api/git/status').catch(() => ({ data: { hasChanges: false } })),
+        api('/api/git/status').catch(() => ({ data: { hasChanges: false, hasPendingPush: false } })),
       ]);
 
       state.automations = automations.data || [];
@@ -924,10 +940,16 @@
       state.devices = devices.data || [];
       state.warnings = warnings.data || [];
       state.gitHasChanges = Boolean(gitStatus?.data?.hasChanges);
-      byId('repo-status').textContent = state.gitHasChanges
-        ? 'Pending changes detected'
-        : 'No backup changes to commit';
+      state.gitHasPendingPush = Boolean(gitStatus?.data?.hasPendingPush);
+      if (state.gitHasChanges) {
+        byId('repo-status').textContent = 'Pending changes to commit';
+      } else if (state.gitHasPendingPush) {
+        byId('repo-status').textContent = 'Commits ready to push';
+      } else {
+        byId('repo-status').textContent = 'No backup changes to commit';
+      }
       byId('btn-commit').disabled = state.inFlight.size > 0 || !state.gitHasChanges;
+      byId('btn-push').disabled = state.inFlight.size > 0 || !state.gitHasPendingPush;
 
       renderFilterSuggestions();
       renderWarnings();
@@ -1061,8 +1083,10 @@
         return `
           <tr class="${rowClass}">
             <td data-label="Automation">
-              <strong>${escapeHtml(item.alias || item.id)}</strong><br>
-              <small>${escapeHtml(item.id)}</small>
+              <button class="entity-open" data-action="open-edit" data-entity-type="automation" data-id="${escapeHtml(item.id)}" data-edit-id="${escapeHtml(editId)}" title="Open Home Assistant automation edit page in a new tab.">
+                <strong>${escapeHtml(item.alias || item.id)}</strong><br>
+                <small>${escapeHtml(item.id)}</small>
+              </button>
             </td>
             <td data-label="Status">
               <span class="status ${statusClass}">${statusText}</span>
@@ -1096,9 +1120,11 @@
             <td data-label="Actions">
               <div class="actions">
                 <button class="primary" data-action="save-meta" data-entity-type="automation" data-id="${escapeHtml(item.id)}" title="Save category, labels, and room metadata.">Save meta</button>
-                <button data-action="open-edit" data-entity-type="automation" data-id="${escapeHtml(item.id)}" data-edit-id="${escapeHtml(editId)}" title="Open Home Assistant automation edit page in a new tab.">Edit</button>
                 <button data-action="open-raw" data-entity-type="automation" data-id="${escapeHtml(item.id)}" title="Open YAML history for this automation.">History</button>
-                <button class="warn" data-action="quarantine" data-entity-type="automation" data-id="${escapeHtml(item.id)}" ${isQuarantine ? 'disabled' : ''} title="Move automation to quarantine and remove it from HA after confirmation.">Quarantine</button>
+                ${isQuarantine
+                  ? `<button class="primary" data-action="restore" data-entity-type="automation" data-id="${escapeHtml(item.id)}" title="Restore automation from quarantine backup into HA.">Przywroc</button>`
+                  : `<button class="warn" data-action="quarantine" data-entity-type="automation" data-id="${escapeHtml(item.id)}" title="Move automation to quarantine and remove it from HA after confirmation.">Quarantine</button>`
+                }
                 ${isQuarantine ? `<button class="danger" data-action="delete-quarantine" data-id="${escapeHtml(item.id)}" title="Permanently delete quarantine backup entry after confirmation.">Permanent delete</button>` : ''}
               </div>
             </td>
@@ -1142,8 +1168,10 @@
         return `
           <tr class="${rowClass}">
             <td data-label="Script">
-              <strong>${escapeHtml(item.alias || item.id)}</strong><br>
-              <small>${escapeHtml(item.id)}</small>
+              <button class="entity-open" data-action="open-edit" data-entity-type="script" data-id="${escapeHtml(item.id)}" data-edit-id="${escapeHtml(editId)}" title="Open Home Assistant script edit page in a new tab.">
+                <strong>${escapeHtml(item.alias || item.id)}</strong><br>
+                <small>${escapeHtml(item.id)}</small>
+              </button>
             </td>
             <td data-label="Category">
               <input data-field="category" data-id="${escapeHtml(item.id)}" value="${escapeHtml(category)}" placeholder="e.g. utility" />
@@ -1178,9 +1206,11 @@
             <td data-label="Actions">
               <div class="actions">
                 <button class="primary" data-action="save-meta" data-entity-type="script" data-id="${escapeHtml(item.id)}" title="Save category, labels, and room metadata.">Save meta</button>
-                <button data-action="open-edit" data-entity-type="script" data-id="${escapeHtml(item.id)}" data-edit-id="${escapeHtml(editId)}" title="Open Home Assistant script edit page in a new tab.">Edit</button>
                 <button data-action="open-raw" data-entity-type="script" data-id="${escapeHtml(item.id)}" title="Open YAML history for this script.">History</button>
-                <button class="warn" data-action="quarantine" data-entity-type="script" data-id="${escapeHtml(item.id)}" ${isQuarantine ? 'disabled' : ''} title="Move script to quarantine and remove it from HA after confirmation.">Quarantine</button>
+                ${isQuarantine
+                  ? `<button class="primary" data-action="restore" data-entity-type="script" data-id="${escapeHtml(item.id)}" title="Restore script from quarantine backup into HA.">Przywroc</button>`
+                  : `<button class="warn" data-action="quarantine" data-entity-type="script" data-id="${escapeHtml(item.id)}" title="Move script to quarantine and remove it from HA after confirmation.">Quarantine</button>`
+                }
                 ${isQuarantine ? `<button class="danger" data-action="delete-quarantine" data-id="${escapeHtml(item.id)}" title="Permanently delete quarantine backup entry after confirmation.">Permanent delete</button>` : ''}
               </div>
             </td>
@@ -1236,7 +1266,10 @@
                       ${escapeHtml(caption)}
                     </button>
                     <button class="history" data-action="open-raw" data-id="${escapeHtml(a.id)}" title="Open raw configuration history.">History</button>
-                    <button class="quarantine" data-action="quarantine" data-entity-type="${escapeHtml(entityType)}" data-id="${escapeHtml(a.id)}" ${a.status === 'quarantine' ? 'disabled' : ''} title="Move entity to quarantine.">Quarantine</button>
+                    ${a.status === 'quarantine'
+                      ? `<button class="primary" data-action="restore" data-entity-type="${escapeHtml(entityType)}" data-id="${escapeHtml(a.id)}" title="Restore entity from quarantine backup into HA.">Przywroc</button>`
+                      : `<button class="quarantine" data-action="quarantine" data-entity-type="${escapeHtml(entityType)}" data-id="${escapeHtml(a.id)}" title="Move entity to quarantine.">Quarantine</button>`
+                    }
                   </span>
                 `;
               }).join('')}
@@ -1481,10 +1514,19 @@
       setBusy('import', true);
       try {
         const result = await api('/api/import', { method: 'POST' });
-        showToast(
-          `Import: changed=${result.importedCount || 0}, discovered=${result.total || 0}, failed=${result.failedCount || 0}`
-        );
         await refresh();
+        const importSummary = `Import: changed=${result.importedCount || 0}, discovered=${result.total || 0}, failed=${result.failedCount || 0}`;
+        if (result?.autoCommit?.created) {
+          if (state.gitHasPendingPush) {
+            showToast(`${importSummary}. Auto-commit created. You can push changes now.`);
+          } else {
+            showToast(`${importSummary}. Auto-commit created.`);
+          }
+        } else if (state.gitHasPendingPush) {
+          showToast(`${importSummary}. Commits are pending push.`);
+        } else {
+          showToast(importSummary);
+        }
       } catch (error) {
         showToast(error.message);
       } finally {
@@ -1519,6 +1561,11 @@
     }
 
     async function runPush() {
+      if (!state.gitHasPendingPush) {
+        showToast('No commits pending push');
+        return;
+      }
+
       setBusy('push', true);
       try {
         const result = await api('/api/git/push', { method: 'POST' });

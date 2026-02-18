@@ -62,7 +62,7 @@ app.use(express.static(path.join(__dirname, '../public')));
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
-    version: '1.0.0b21',
+    version: '1.0.0b22',
     startedAt: process.uptime(),
     startup: startupState,
   });
@@ -70,7 +70,7 @@ app.get('/api/health', (_req, res) => {
 
 app.get('/api/config', (_req, res) => {
   res.json({
-    version: '1.0.0b21',
+    version: '1.0.0b22',
     syncIntervalSeconds: options.sync_interval_seconds,
     remoteEnabled: options.remote_enabled,
   });
@@ -192,7 +192,7 @@ app.post('/api/import', async (_req, res) => {
   if (!service) return;
 
   try {
-    const result = await service.importFromHa({ automaticCommit: false });
+    const result = await service.importFromHa({ automaticCommit: true });
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });

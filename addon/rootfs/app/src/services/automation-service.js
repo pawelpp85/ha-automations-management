@@ -859,6 +859,9 @@ class AutomationService {
   gitStatus() {
     return {
       hasChanges: this.gitBackup.hasChanges(),
+      hasPendingPush: typeof this.gitBackup.hasPendingPush === 'function'
+        ? this.gitBackup.hasPendingPush()
+        : false,
     };
   }
 }

@@ -187,6 +187,37 @@ class GitBackupService {
     return status.length > 0;
   }
 
+  hasPendingPush() {
+    if (!this.options.remote_enabled || !this.options.remote_url) {
+      return false;
+    }
+
+    try {
+      this.git(['rev-parse', '--verify', 'HEAD']);
+    } catch (_error) {
+      return false;
+    }
+
+    let hasUpstream = true;
+    try {
+      this.git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
+    } catch (_error) {
+      hasUpstream = false;
+    }
+
+    if (!hasUpstream) {
+      return true;
+    }
+
+    try {
+      const ahead = Number(this.git(['rev-list', '--count', '@{u}..HEAD']) || '0');
+      return Number.isFinite(ahead) && ahead > 0;
+    } catch (_error) {
+      // If git cannot determine ahead/behind, keep push enabled so user can retry.
+      return true;
+    }
+  }
+
   commit(message) {
     this.git(['add', '-A']);
     if (!this.hasChanges()) {

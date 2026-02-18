@@ -65,6 +65,28 @@ test('GitBackupService creates commits when changes exist', () => {
   assert.equal(noChange.created, false);
 });
 
+test('GitBackupService hasPendingPush is false when remote is disabled', () => {
+  const repoDir = tempDir('ha-am-repo-pending-off-');
+  const backup = new GitBackupService(options(), repoDir);
+  backup.writeYaml('active', 'automation.pending_off', { alias: 'Pending off', trigger: [], action: [] });
+  backup.commit('test: pending off');
+
+  assert.equal(backup.hasPendingPush(), false);
+});
+
+test('GitBackupService hasPendingPush is true when remote is enabled and commit is not pushed', () => {
+  const repoDir = tempDir('ha-am-repo-pending-on-');
+  const backup = new GitBackupService({
+    ...options(),
+    remote_enabled: true,
+    remote_url: 'git@github.com:example/private.git',
+  }, repoDir);
+  backup.writeYaml('active', 'automation.pending_on', { alias: 'Pending on', trigger: [], action: [] });
+  backup.commit('test: pending on');
+
+  assert.equal(backup.hasPendingPush(), true);
+});
+
 test('GitBackupService rejects invalid base64 SSH key early', () => {
   const repoDir = tempDir('ha-am-repo-push-');
   const backup = new GitBackupService({
